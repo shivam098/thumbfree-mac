@@ -229,7 +229,7 @@ final class FocusedFieldTests: XCTestCase {
         system.onFocusQuery = { [unowned system] in
             if app.flags["AXEnhancedUserInterface"] == true { system.focus = box }
         }
-        let clock = FakeClock()
+        let clock = FakeReaderClock()
         let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
 
         let field = try XCTUnwrap(reader.read())
@@ -255,7 +255,7 @@ final class FocusedFieldTests: XCTestCase {
             processIdentifier: slack, bundleIdentifier: "com.tinyspeck.slackmacgap", isElectron: true)
         let app = system.application(slack) as! FakeAXField
         system.focus = FakeAXField("AXTextArea", in: FakeAXField("AXWebArea", in: system.window("general", in: slack)))
-        let clock = FakeClock()
+        let clock = FakeReaderClock()
 
         let field = try XCTUnwrap(FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now).read())
 
@@ -270,7 +270,7 @@ final class FocusedFieldTests: XCTestCase {
         system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
         let app = system.application(chrome) as! FakeAXField
         system.focus = FakeAXField("AXWebArea", in: system.window("New Tab", in: chrome))
-        let clock = FakeClock()
+        let clock = FakeReaderClock()
         let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
         reader.wakesWebContent = false
 
@@ -287,7 +287,7 @@ final class FocusedFieldTests: XCTestCase {
         let window = system.window("Docs", in: chrome)
         let page = FakeAXField("AXWebArea", in: window)
         system.focus = page
-        let clock = FakeClock()
+        let clock = FakeReaderClock()
         let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
 
         let field = try XCTUnwrap(reader.read())
@@ -427,7 +427,7 @@ private final class FakeAXSystem: FocusedField.Accessibility {
 }
 
 /// Time that passes only when the reader sleeps.
-private final class FakeClock {
+private final class FakeReaderClock {
     private(set) var time: TimeInterval = 0
 
     func sleep(_ interval: TimeInterval) {

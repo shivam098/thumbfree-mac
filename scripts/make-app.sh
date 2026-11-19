@@ -26,8 +26,18 @@ dist="$root/dist"
 app="$dist/ThumbFree.app"
 dmg="$dist/ThumbFree-$version.dmg"
 work="$root/.build/make-app"
+volume="$work/volume"
 rm -rf "$app" "$dmg" "$work"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$work"
+
+# The icon set, the image's staging folder and its mount point go, whether or not the build gets that far.
+cleanup() {
+  if [[ -d "$volume" ]]; then
+    hdiutil detach "$volume" -quiet 2>/dev/null || true
+  fi
+  rm -rf "$work" || true
+}
+trap cleanup EXIT
 
 echo "== Building ThumbFree $version for arm64 and x86_64"
 swift build -c release --arch arm64 --arch x86_64 --product ThumbFree
@@ -124,12 +134,11 @@ done
 hdiutil verify "$dmg"
 
 # The app in the image is signed too.
-mount="$work/mount"
-mkdir -p "$mount"
-hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null
-codesign --verify --deep --strict "$mount/ThumbFree.app"
-test -L "$mount/Applications"
-hdiutil detach "$mount" >/dev/null
+mkdir -p "$volume"
+hdiutil attach -nobrowse -readonly -mountpoint "$volume" "$dmg" >/dev/null
+codesign --verify --deep --strict "$volume/ThumbFree.app"
+test -L "$volume/Applications"
+hdiutil detach "$volume" >/dev/null
 
 echo "== Done"
 plutil -p "$app/Contents/Info.plist"

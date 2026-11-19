@@ -1,4 +1,5 @@
 import ThumbFreeCore
+import ThumbFreeMac
 import ThumbFreeSpeech
 
 // The menu-bar app (docs/mac.md, phase 3) replaces this.

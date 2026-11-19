@@ -64,9 +64,34 @@ build() {
     tail -n 100 "$dir.build.log"
     return 1
   fi
-  merge_static "$work/libCWhisper-$arch.a" "$dir/src/libwhisper.a" "$dir/ggml/src/libggml.a" \
-    "$dir/ggml/src/libggml-base.a" "$dir/ggml/src/libggml-cpu.a" "$dir/ggml/src/ggml-metal/libggml-metal.a" \
-    "$dir/ggml/src/ggml-blas/libggml-blas.a"
+
+  # The objects of whisper and the ggml libraries it links. CMake's archives keep each object's build time, which libtool
+  # copies, so the objects themselves are merged, with a fixed time: the same sources give the same bytes.
+  local objects=() expected=0 target folder object library
+  for target in whisper ggml ggml-base ggml-cpu ggml-metal ggml-blas; do
+    folder=$(find "$dir" -type d -name "$target.dir" | head -n 1)
+    if [ -z "$folder" ]; then
+      echo "::error::No objects for $target in $dir"
+      return 1
+    fi
+
+    while IFS= read -r object; do
+      objects+=("$object")
+    done < <(find "$folder" -name '*.o' | LC_ALL=C sort)
+  done
+
+  for library in src/libwhisper.a ggml/src/libggml.a ggml/src/libggml-base.a ggml/src/libggml-cpu.a \
+      ggml/src/ggml-metal/libggml-metal.a ggml/src/ggml-blas/libggml-blas.a; do
+    expected=$((expected + $(ar -t "$dir/$library" | grep -vc SYMDEF || true)))
+  done
+
+  if [ "${#objects[@]}" -ne "$expected" ]; then
+    echo "::error::$arch: ${#objects[@]} objects found, CMake's libraries have $expected"
+    return 1
+  fi
+
+  touch -t 200001010000 "${objects[@]}"
+  merge_static "$work/libCWhisper-$arch.a" "${objects[@]}"
 }
 
 build arm64

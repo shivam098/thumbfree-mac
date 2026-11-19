@@ -9,8 +9,8 @@ fetch() {
   fi
 }
 
-# Merges the static libraries $2... into $1 (each architecture of universal inputs separately). -D (and ZERO_AR_DATE)
-# give the members fixed dates, owners and modes, so the same inputs give the same bytes.
+# Merges the static libraries or objects $2... into $1 (each architecture of universal inputs separately). ZERO_AR_DATE
+# and -D give objects fixed dates, owners and modes in the archive; members of input archives keep their headers.
 merge_static() {
   local output=$1
   shift

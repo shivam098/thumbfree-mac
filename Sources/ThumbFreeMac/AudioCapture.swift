@@ -235,23 +235,46 @@ extension AudioCapture {
                 && format.commonFormat == inputFormat.commonFormat && format.isInterleaved == inputFormat.isInterleaved
         }
 
-        /// The buffer's audio at 16 kHz, mono. The resampler holds back a few samples until the next buffer.
+        /// The buffer's audio at 16 kHz, mono. The resampler holds back a few samples (under a millisecond) until the
+        /// next buffer comes; `flush()` gives them up.
         public func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
             let mono = Converter.mono(buffer)
-            guard let resampler, !mono.isEmpty else { return mono }
-            guard let input = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: AVAudioFrameCount(mono.count)),
+            guard let resampler else { return mono }
+            // 10 ms at a time: given a whole 100 ms tap buffer at once, AVAudioConverter keeps up to 4,096 input frames
+            // (85 ms at 48 kHz) for the next one; given 10 ms, it keeps a few samples.
+            let piece = max(Int(monoFormat.sampleRate) / 100, 1)
+            var samples: [Float] = []
+            var start = 0
+            while start < mono.count {
+                let end = min(start + piece, mono.count)
+                samples += resample(mono[start..<end], with: resampler)
+                start = end
+            }
+
+            return samples
+        }
+
+        /// The samples the resampler still holds, at the end of the audio. The converter starts afresh after it.
+        func flush() -> [Float] {
+            guard let resampler else { return [] }
+            let samples = drain(resampler, expecting: Int(monoFormat.sampleRate)) { inputStatus in
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+
+            resampler.reset()
+            return samples
+        }
+
+        private func resample(_ piece: ArraySlice<Float>, with resampler: AVAudioConverter) -> [Float] {
+            guard let input = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: AVAudioFrameCount(piece.count)),
                   let inputSamples = input.floatChannelData?[0]
             else { return [] }
-            inputSamples.update(from: mono, count: mono.count)
-            input.frameLength = AVAudioFrameCount(mono.count)
+            piece.withUnsafeBufferPointer { inputSamples.update(from: $0.baseAddress!, count: $0.count) }
+            input.frameLength = AVAudioFrameCount(piece.count)
 
-            // Room for this buffer and for the samples held back from the last one.
-            let expected = Double(mono.count) * outputFormat.sampleRate / monoFormat.sampleRate
-            let capacity = AVAudioFrameCount(expected.rounded(.up)) + 1_024
-            guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return [] }
             var given = false
-            var error: NSError?
-            let status = resampler.convert(to: output, error: &error) { _, inputStatus in
+            return drain(resampler, expecting: piece.count) { inputStatus in
                 if given {
                     inputStatus.pointee = .noDataNow
                     return nil
@@ -261,9 +284,29 @@ extension AudioCapture {
                 inputStatus.pointee = .haveData
                 return input
             }
+        }
 
-            guard status != .error, error == nil, let samples = output.floatChannelData?[0] else { return [] }
-            return Array(UnsafeBufferPointer(start: samples, count: Int(output.frameLength)))
+        /// Runs the resampler until it has nothing more to give. Its output buffer is about the size this input should
+        /// make; a buffer it fills ("have data") means more is ready now.
+        private func drain(
+            _ resampler: AVAudioConverter, expecting inputFrames: Int,
+            input: @escaping (UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?
+        ) -> [Float] {
+            let expected = Double(inputFrames) * outputFormat.sampleRate / monoFormat.sampleRate
+            let capacity = AVAudioFrameCount(expected.rounded(.up)) + 64
+            var samples: [Float] = []
+            for _ in 0..<64 {
+                guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { break }
+                var error: NSError?
+                let status = resampler.convert(to: output, error: &error) { _, inputStatus in input(inputStatus) }
+                guard status != .error, error == nil, let data = output.floatChannelData?[0] else { break }
+                samples += UnsafeBufferPointer(start: data, count: Int(output.frameLength))
+                if status != .haveData || output.frameLength == 0 {
+                    break
+                }
+            }
+
+            return samples
         }
 
         /// The average of the buffer's channels, from Float32 or Int16 samples, interleaved or not.

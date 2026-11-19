@@ -156,9 +156,11 @@ final class AudioCaptureTests: XCTestCase {
         let buffers = tone(rate: 48_000, channels: 2, seconds: 1, amplitude: 0.5)
         let converter = AudioCapture.Converter(inputFormat: buffers[0].format)!
         let output = buffers.flatMap { converter.convert($0) }
+        let rest = converter.flush()
 
-        // A second of audio, less the few samples the resampler holds back for the next buffer.
-        XCTAssertLessThanOrEqual(abs(output.count - 16_000), 160, "\(output.count) samples")
+        // Nothing is lost: a second of audio, of which the resampler held back under 10 ms for the next buffer.
+        XCTAssertEqual(16_000, output.count + rest.count)
+        XCTAssertLessThan(rest.count, 160)
         XCTAssertEqual(0.5 / Float(2).squareRoot(), rms(output[160...]), accuracy: 0.02)
     }
 
@@ -166,8 +168,10 @@ final class AudioCaptureTests: XCTestCase {
         let buffers = tone(rate: 44_100, channels: 1, seconds: 1, amplitude: 0.25)
         let converter = AudioCapture.Converter(inputFormat: buffers[0].format)!
         let output = buffers.flatMap { converter.convert($0) }
+        let rest = converter.flush()
 
-        XCTAssertLessThanOrEqual(abs(output.count - 16_000), 160, "\(output.count) samples")
+        XCTAssertEqual(16_000, output.count + rest.count)
+        XCTAssertLessThan(rest.count, 160)
         XCTAssertEqual(0.25 / Float(2).squareRoot(), rms(output[160...]), accuracy: 0.02)
     }
 
@@ -245,12 +249,15 @@ final class AudioCaptureTests: XCTestCase {
         XCTAssertEqual(2, input.starts)
         XCTAssertEqual(1, input.stops)
         // The new microphone is 48 kHz stereo; the 120 samples left from the old one are kept.
-        for buffer in tone(rate: 48_000, channels: 2, seconds: 1, amplitude: 0.5) {
+        let newMicrophone = tone(rate: 48_000, channels: 2, seconds: 1, amplitude: 0.5)
+        let reference = AudioCapture.Converter(inputFormat: newMicrophone[0].format)!
+        let converted = newMicrophone.reduce(0) { $0 + reference.convert($1).count }
+        for buffer in newMicrophone {
             input.speak(buffer)
         }
 
         let chunks = received.all
-        XCTAssertGreaterThanOrEqual(chunks.count, 33)
+        XCTAssertEqual(1 + (120 + converted) / 480, chunks.count)
         XCTAssertTrue(chunks.allSatisfy { $0.samples.count == 480 })
         XCTAssertEqual(Array(repeating: Float(0.1), count: 120), Array(chunks[1].samples[0..<120]))
     }

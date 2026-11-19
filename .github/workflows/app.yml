@@ -1,0 +1,51 @@
+name: App
+
+# ThumbFree.app, universal and signed ad hoc, in a .dmg to test on a Mac (scripts/make-app.sh). The .dmg is this run's
+# artifact.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "scripts/**"
+      - "assets/**"
+      - "Package.swift"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "Sources/**"
+      - "scripts/**"
+      - "assets/**"
+      - "Package.swift"
+      - ".github/workflows/app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: ThumbFree.app in a .dmg (signed ad hoc)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build the app and the disk image
+        run: ./scripts/make-app.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThumbFree-dmg
+          path: dist/ThumbFree-*.dmg
+          if-no-files-found: error

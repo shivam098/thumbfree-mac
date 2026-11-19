@@ -26,7 +26,9 @@ extension FocusedField {
         }
 
         func range(_ attribute: String, of element: AnyObject) throws -> CFRange? {
-            try value(attribute, of: element, .cfRange, CFRange())
+            guard let value = try axValue(attribute, of: element, .cfRange) else { return nil }
+            var range = CFRange()
+            return AXValueGetValue(value, .cfRange, &range) ? range : nil
         }
 
         func element(_ attribute: String, of element: AnyObject) throws -> AnyObject? {
@@ -38,9 +40,14 @@ extension FocusedField {
         }
 
         func frame(of element: AnyObject) throws -> CGRect? {
-            guard let origin = try value(kAXPositionAttribute, of: element, .cgPoint, CGPoint.zero),
-                  let size = try value(kAXSizeAttribute, of: element, .cgSize, CGSize.zero) else { return nil }
-            return CGRect(origin: origin, size: size)
+            guard let position = try axValue(kAXPositionAttribute, of: element, .cgPoint),
+                  let size = try axValue(kAXSizeAttribute, of: element, .cgSize) else { return nil }
+            var frame = CGRect.zero
+            guard AXValueGetValue(position, .cgPoint, &frame.origin), AXValueGetValue(size, .cgSize, &frame.size) else {
+                return nil
+            }
+
+            return frame
         }
 
         func processIdentifier(of element: AnyObject) throws -> pid_t {
@@ -88,18 +95,14 @@ extension FocusedField {
             }
         }
 
-        /// A point, size or range attribute (an AXValue).
-        private func value<T>(_ attribute: String, of element: AnyObject, _ type: AXValueType, _ initial: T) throws
-            -> T?
-        {
+        /// A point, size or range attribute: an AXValue of `type`.
+        private func axValue(_ attribute: String, of element: AnyObject, _ type: AXValueType) throws -> AXValue? {
             guard let value = try copy(attribute, of: element), CFGetTypeID(value) == AXValueGetTypeID() else {
                 return nil
             }
 
             let axValue = unsafeBitCast(value, to: AXValue.self)
-            var result = initial
-            guard AXValueGetType(axValue) == type, AXValueGetValue(axValue, type, &result) else { return nil }
-            return result
+            return AXValueGetType(axValue) == type ? axValue : nil
         }
 
         private static func ax(_ element: AnyObject) -> AXUIElement {

@@ -1,0 +1,56 @@
+name: Engines
+
+# Builds the speech engines as static xcframeworks for Package.swift's binary targets: CSherpaOnnx (sherpa-onnx with
+# onnxruntime, for Kroko and Parakeet) and CWhisper (whisper.cpp with ggml, Metal and Accelerate, for the Hindi + English
+# models and Silero). The zips and their notices are uploaded as this run's artifact, then published as assets of the
+# releases engines-sherpa-onnx-<version> and engines-whisper-<version>, and Package.swift pins their URLs and checksums.
+on:
+  workflow_dispatch:
+  # workflow_dispatch works only once this file is on main; until then, a push to mac-speech that changes the engine
+  # build runs it.
+  push:
+    branches: [mac-speech]
+    paths: [".github/workflows/engines.yml", "scripts/engines/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the engines
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          cmake --version
+
+      - name: sherpa-onnx
+        run: bash scripts/engines/build-sherpa-onnx.sh build/engines/out
+
+      - name: whisper.cpp
+        run: bash scripts/engines/build-whisper.sh build/engines/out
+
+      - name: Link both into a Swift program and run it
+        run: bash scripts/engines/smoke-test.sh build/engines/out
+
+      - name: Checksums for Package.swift
+        working-directory: build/engines/out
+        run: |
+          for zip in *.xcframework.zip; do
+            checksum=$(swift package compute-checksum "$zip" 2> /dev/null || shasum -a 256 "$zip" | cut -d ' ' -f 1)
+            echo "$zip: $checksum" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engines
+          path: |
+            build/engines/out/*.xcframework.zip
+            build/engines/out/*-NOTICE.txt
+          if-no-files-found: error

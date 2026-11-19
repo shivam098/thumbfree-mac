@@ -9,13 +9,13 @@ fetch() {
   fi
 }
 
-# Merges the static libraries $2... into $1 (each architecture of universal inputs separately). ZERO_AR_DATE keeps
-# timestamps out of the archive, so the same inputs give the same bytes.
+# Merges the static libraries $2... into $1 (each architecture of universal inputs separately). -D (and ZERO_AR_DATE)
+# give the members fixed dates, owners and modes, so the same inputs give the same bytes.
 merge_static() {
   local output=$1
   shift
   # libtool warns about object files with the same name in different libraries; it keeps both, as it should.
-  if ! ZERO_AR_DATE=1 libtool -static -o "$output" "$@" 2> "$output.log"; then
+  if ! ZERO_AR_DATE=1 libtool -static -D -o "$output" "$@" 2> "$output.log"; then
     cat "$output.log" >&2
     return 1
   fi

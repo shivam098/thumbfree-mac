@@ -22,8 +22,9 @@ work=$root/build/engines/whisper
 
 rm -rf "$work"
 mkdir -p "$work"
-git -c advice.detachedHead=false clone --quiet --depth 1 --branch "v$version" https://github.com/ggml-org/whisper.cpp \
-  "$work/src"
+git -c init.defaultBranch=main init --quiet "$work/src"
+git -C "$work/src" fetch --quiet --depth 1 https://github.com/ggml-org/whisper.cpp "refs/tags/v$version"
+git -C "$work/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
 if [ "$(git -C "$work/src" rev-parse HEAD)" != "$commit" ]; then
   echo "::error::whisper.cpp v$version is $(git -C "$work/src" rev-parse HEAD), expected $commit"
   exit 1

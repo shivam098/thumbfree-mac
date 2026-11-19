@@ -153,7 +153,8 @@ extension AudioCapture {
             guard format.sampleRate > 0, format.channelCount > 0 else { throw Failure.noMicrophone }
 
             // 100 ms, the shortest buffer a tap delivers.
-            node.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate / 10), format: format) { buffer, _ in
+            let frames = AVAudioFrameCount(format.sampleRate / 10)
+            node.installTap(onBus: 0, bufferSize: frames, format: format) { buffer, _ in
                 buffers(buffer)
             }
 

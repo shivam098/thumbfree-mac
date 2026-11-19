@@ -3,7 +3,7 @@ import Foundation
 /// The shared test data at the repository root: tests/vectors (how each test sentence must come out) and tests/audio
 /// (speech recordings). They're the same files in every ThumbFree repo.
 enum TestData {
-    /// The repository root, found from this file's path: Tests/<target>/TestData.swift.
+    /// The repository root, found from this file's path: tests/<target>/TestData.swift.
     static let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()

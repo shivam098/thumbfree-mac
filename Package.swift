@@ -18,7 +18,8 @@ let package = Package(
         .target(name: "ThumbFreeCore"),
         .target(name: "ThumbFreeSpeech", dependencies: ["ThumbFreeCore"]),
         .executableTarget(name: "ThumbFree", dependencies: ["ThumbFreeCore", "ThumbFreeSpeech"]),
-        .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"]),
-        .testTarget(name: "ThumbFreeSpeechTests", dependencies: ["ThumbFreeSpeech"]),
+        // Next to the shared test data in tests/vectors and tests/audio (lowercase, as in every ThumbFree repo).
+        .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"], path: "tests/ThumbFreeCoreTests"),
+        .testTarget(name: "ThumbFreeSpeechTests", dependencies: ["ThumbFreeSpeech"], path: "tests/ThumbFreeSpeechTests"),
     ]
 )

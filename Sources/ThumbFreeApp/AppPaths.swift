@@ -2,7 +2,8 @@ import Foundation
 
 /// Where ThumbFree keeps its files on this Mac (docs/mac.md), in the same formats as ThumbFree for Windows so they can
 /// move between the two: thumbfree-windows `AppPaths`. Windows splits them between %APPDATA% (settings) and
-/// %LOCALAPPDATA% (the rest); the Mac keeps them together. Tests use folders of their own.
+/// %LOCALAPPDATA% (the rest); the Mac keeps them together, with the dictated text in a folder of its own that Spotlight
+/// leaves out. Tests use folders of their own.
 public struct AppPaths: Equatable, Sendable {
     /// ~/Library/Application Support/ThumbFree: settings, History, samples, models and the state flags.
     public var data: String
@@ -29,11 +30,16 @@ public struct AppPaths: Equatable, Sendable {
     /// settings.json, in the Windows app's format.
     public var settingsFile: String { file("settings.json") }
 
+    /// Where the dictated text is kept, History and samples: a folder Spotlight doesn't index, since its name ends in
+    /// .noindex (Windows marks history.txt "not content indexed"; a .metadata_never_index file in a folder no longer
+    /// keeps Spotlight out on recent macOS).
+    public var dictationsFolder: String { file("Dictations.noindex") }
+
     /// History: the text of recent dictations (30 days, at most 500), on this Mac only.
-    public var historyFile: String { file("history.txt") }
+    public var historyFile: String { (dictationsFolder as NSString).appendingPathComponent("history.txt") }
 
     /// "Help improve ThumbFree": dictations kept to share by hand, only while that switch is on.
-    public var samplesFolder: String { file("samples") }
+    public var samplesFolder: String { (dictationsFolder as NSString).appendingPathComponent("samples") }
 
     /// Where downloaded models go (ThumbFreeSpeech's `ModelStore.defaultFolder`).
     public var modelsFolder: String { file("models") }
@@ -43,6 +49,9 @@ public struct AppPaths: Equatable, Sendable {
 
     /// Present while the pill is shown all the time (by default it appears only while it has something to say).
     public var pillPinnedFlag: String { file("overlay-pinned") }
+
+    /// Locked by the copy of ThumbFree that's running (`SingleInstance`).
+    public var instanceLock: String { file("instance.lock") }
 
     private func file(_ name: String) -> String { (data as NSString).appendingPathComponent(name) }
 }

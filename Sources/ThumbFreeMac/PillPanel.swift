@@ -52,6 +52,15 @@ extension Pill {
             }
         }
 
+        /// The dictation key, as the texts name it ("Fn", "Right Option"): a setting, so it can change.
+        public var keyName: String {
+            get { model.keyName }
+            set {
+                model.keyName = newValue
+                render()
+            }
+        }
+
         public func showActivity(_ activity: String?) {
             model.showActivity(activity)
             if activity == Pill.transcribing {

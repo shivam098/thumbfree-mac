@@ -257,7 +257,8 @@ enum SettingsJSON {
             }
 
             if bytes[i] == UInt8(ascii: "/") && i + 1 < bytes.count && bytes[i + 1] == UInt8(ascii: "/") {
-                i = bytes[i...].firstIndex(of: 0x0A) ?? bytes.count
+                // A line comment ends at a line feed or a carriage return, as the reader reads it.
+                i = bytes[i...].firstIndex { $0 == 0x0A || $0 == 0x0D } ?? bytes.count
             } else if bytes[i] == UInt8(ascii: "/") && i + 1 < bytes.count && bytes[i + 1] == UInt8(ascii: "*") {
                 i = (find(bytes, [UInt8(ascii: "*"), UInt8(ascii: "/")], from: i + 2) ?? bytes.count) + 1
             }
@@ -294,6 +295,10 @@ extension SettingsJSON {
         private let bytes: [UInt8]
         private var at = 0
         private var depth = 0
+
+        /// Where line comments ended at a carriage return with no line feed after it: System.Text.Json counts a line
+        /// there, though a carriage return elsewhere doesn't count.
+        private var commentLineEnds: [Int] = []
 
         init(_ bytes: [UInt8]) {
             self.bytes = bytes
@@ -613,6 +618,10 @@ extension SettingsJSON {
 
                         at += 1
                     }
+
+                    if at < bytes.count && bytes[at] == 0x0D && (at + 1 == bytes.count || bytes[at + 1] != 0x0A) {
+                        commentLineEnds.append(at)
+                    }
                 } else if at + 1 < bytes.count && bytes[at + 1] == UInt8(ascii: "*") {
                     guard let close = SettingsJSON.find(bytes, [UInt8(ascii: "*"), UInt8(ascii: "/")], from: at + 2)
                     else { throw mistake("Expected end of comment, but instead reached end of data.") }
@@ -623,10 +632,11 @@ extension SettingsJSON {
             }
         }
 
-        /// A mistake here: the line is the number of line feeds before it, as System.Text.Json counts lines.
+        /// A mistake here: the line is the number of line feeds before it, as System.Text.Json counts lines, and of
+        /// line comments that ended at a carriage return alone, which it counts too.
         private func mistake(_ message: String) -> Mistake {
-            let line = bytes[..<min(at, bytes.count)].lazy.filter { $0 == 0x0A }.count
-            return Mistake(message: message, line: line)
+            let feeds = bytes[..<min(at, bytes.count)].lazy.filter { $0 == 0x0A }.count
+            return Mistake(message: message, line: feeds + commentLineEnds.filter { $0 < at }.count)
         }
 
         private func shown(_ byte: UInt8) -> String {

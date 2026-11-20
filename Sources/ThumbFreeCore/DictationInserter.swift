@@ -5,11 +5,17 @@ public struct WindowInfo: Equatable, Sendable {
     public var processName: String
     public var title: String
 
-    public init(handle: Int, processId: Int, processName: String, title: String) {
+    /// The app's name as you see it, when that isn't `processName`: on the Mac, its name as macOS shows it, which some
+    /// languages translate, while the process name is its executable's, which none do. New-line keys are found by
+    /// `processName`, then by this.
+    public var appName: String?
+
+    public init(handle: Int, processId: Int, processName: String, title: String, appName: String? = nil) {
         self.handle = handle
         self.processId = processId
         self.processName = processName
         self.title = title
+        self.appName = appName
     }
 }
 
@@ -79,10 +85,10 @@ public final class DictationInserter {
     private let formatter: DictationFormatter
     private let newLineKeys: [[Unicode.Scalar]: String]
 
-    /// - Parameter newLineKeysByProcess: Keys for a line break per process name, in any case (editors: Enter). Others
-    ///   get Shift+Enter, which chat apps treat as a new line instead of “send”. Keep the settings file's order: of two
-    ///   names that differ only in case, the last counts, as when the Windows app merges its settings (decoding them
-    ///   into a `[String: String]` would lose the order).
+    /// - Parameter newLineKeysByProcess: Keys for a line break per process name (or app name: `WindowInfo.appName`),
+    ///   in any case (editors: Enter). Others get Shift+Enter, which chat apps treat as a new line instead of “send”.
+    ///   Keep the settings file's order: of two names that differ only in case, the last counts, as when the Windows
+    ///   app merges its settings (decoding them into a `[String: String]` would lose the order).
     public init(
         _ desktop: any Desktop,
         _ formatter: DictationFormatter,
@@ -203,7 +209,8 @@ public final class DictationInserter {
             text = " " + text
         }
 
-        let newLine = newLineKeys[DotNet.ordinalIgnoreCase(window.processName)] ?? Self.defaultNewLineKeys
+        let newLine = newLineKeys[DotNet.ordinalIgnoreCase(window.processName)]
+            ?? window.appName.flatMap { newLineKeys[DotNet.ordinalIgnoreCase($0)] } ?? Self.defaultNewLineKeys
         for (i, part) in DotNet.split(text, ["\n"]).enumerated() {
             if i > 0 {
                 try desktop.pressKeys(newLine)

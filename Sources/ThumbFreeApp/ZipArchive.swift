@@ -17,14 +17,20 @@ enum ZipArchive {
         var offset = 0
         var directory = Data()
         for entry in entries {
+            // A zip without its 64-bit extension holds files under 4 GB: asked before reading, so a bigger one is
+            // never read into memory.
+            let attributes = try FileManager.default.attributesOfItem(atPath: entry.file)
+            guard ((attributes[.size] as? NSNumber)?.int64Value ?? 0) <= Int64(UInt32.max) else { throw TooBig() }
             let contents = try Data(contentsOf: URL(fileURLWithPath: entry.file))
-            let modified = (try? FileManager.default.attributesOfItem(atPath: entry.file))?[.modificationDate] as? Date
+            let modified = attributes[.modificationDate] as? Date
             let (time, date) = dosTime(modified ?? Date())
             let crc = crc32(contents)
             let deflated = deflate(contents)
             let data = deflated ?? contents
             let name = Data(entry.name.utf8)
-            guard offset + 30 + name.count + data.count <= Int(UInt32.max) else { throw TooBig() }
+            guard contents.count <= Int(UInt32.max), offset + 30 + name.count + data.count <= Int(UInt32.max) else {
+                throw TooBig()
+            }
 
             // What the local header and the directory entry share: the method (8 deflated, 0 stored), the time, the
             // checksum, the sizes and the name's length, with bit 11 for a UTF-8 name.

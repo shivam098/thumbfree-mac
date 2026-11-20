@@ -32,6 +32,10 @@ public final class PasteTyper {
     /// all the same, replacing that copy.
     public var whenUnreadable = Unreadable.typeWithKeys
 
+    /// How `paste` puts text in: through the pasteboard (the default), or always with key events, as Windows' "Type"
+    /// insert method does (some apps drop characters typed that way, but the pasteboard is never touched).
+    public var insertMethod = InsertMethod.paste
+
     private let pasteboard: Pasteboard
     private let keys: Keys
     private let sleep: (TimeInterval) -> Void
@@ -55,9 +59,15 @@ public final class PasteTyper {
     /// pasted, the pasteboard goes back, and the error is thrown. Something copied before ⌘V (⌘C while the paste
     /// waits for ⌘ to be let go) is kept: it's what goes back afterwards, the text goes on the pasteboard again and is
     /// checked again, and nothing is pasted if the pasteboard keeps changing (`Failure.pasteboardKeptChanging`). A
-    /// pasteboard that can't be read is left alone and the text typed with keys (`whenUnreadable`).
+    /// pasteboard that can't be read is left alone and the text typed with keys (`whenUnreadable`). With `insertMethod`
+    /// `.typeWithKeys`, the text is always typed with keys, after the same checks.
     public func paste(_ text: String, beforeKeys: () throws -> Void = {}) throws {
         let text = text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
+        if insertMethod == .typeWithKeys {
+            try typeWithKeys(text, beforeKeys: beforeKeys)
+            return
+        }
+
         var put = 1
         while true {
             let saved = saveIfReadable()
@@ -303,6 +313,14 @@ extension PasteTyper {
         case typeWithKeys
         /// Pastes the text all the same: it replaces what was on the pasteboard.
         case pasteAndReplace
+    }
+
+    /// How `paste` puts text in (the insertMethod setting: "Paste" or "Type").
+    public enum InsertMethod: Equatable, Sendable {
+        /// Through the pasteboard, which is put back afterwards (or with keys when it can't be read).
+        case paste
+        /// Always with key events, leaving the pasteboard alone.
+        case typeWithKeys
     }
 
     /// The keyboard as the typer uses it: CGEvent (`SystemKeys`), faked in tests.

@@ -65,11 +65,13 @@ public struct AppSettings: Sendable {
     /// Say the trigger (or "insert <trigger>") to type the text, such as "my signature" → "Thanks,\nShivam".
     public var snippets = SettingsDictionary()
 
-    /// The keys pressed for "new line" in each app, by its name as macOS shows it (Windows: its process name). Apps
-    /// not listed get Shift+Enter, which chat apps treat as a new line rather than "send". Windows lists Notepad, Word,
-    /// VS Code and Visual Studio; the Mac lists their Mac counterparts.
+    /// The keys pressed for "new line" in each app, by its executable's name (Contents/MacOS/<name>, which macOS never
+    /// translates), else by its name as macOS shows it (VS Code's executable is Electron, its name Code). Apps not
+    /// listed get Shift+Enter, which chat apps treat as a new line rather than "send". Windows lists Notepad, Word,
+    /// VS Code and Visual Studio by process name; the Mac lists TextEdit, Word, Pages (where Shift+Return is a line
+    /// break inside a paragraph, as in Word), VS Code and Xcode.
     public var newLineKeys: SettingsDictionary = [
-        "TextEdit": "Enter", "Microsoft Word": "Enter", "Code": "Enter", "Xcode": "Enter",
+        "TextEdit": "Enter", "Microsoft Word": "Enter", "Pages": "Enter", "Code": "Enter", "Xcode": "Enter",
     ]
 
     /// Dictation language: the menu bar and Settings switch it.

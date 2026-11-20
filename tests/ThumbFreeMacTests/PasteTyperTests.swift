@@ -324,6 +324,42 @@ final class PasteTyperTests: XCTestCase {
         XCTAssertEqual([String(repeating: "a", count: 20)], keys.typed)
     }
 
+    // MARK: The "Type" insert method
+
+    func testTheTypeInsertMethodAlwaysTypesWithKeysAndLeavesThePasteboardAlone() throws {
+        // Windows' insertMethod "Type": key events, even when the pasteboard could be read and put back.
+        let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
+        typer.insertMethod = .typeWithKeys
+        var checks = 0
+
+        try typer.type("Hi Sam,\nThanks", newLine: .shiftReturn) { checks += 1 }
+
+        XCTAssertEqual(["type Hi Sam,", "⇧↩", "type Thanks"], keys.posted)
+        XCTAssertEqual(3, checks)
+        XCTAssertEqual(0, pasteboard.saves)
+        XCTAssertEqual(1, pasteboard.changeCount)
+        XCTAssertEqual("copied before", pasteboard.text)
+    }
+
+    func testTheTypeInsertMethodWaitsForHeldKeysAndStopsAtTheChecks() {
+        let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
+        typer.insertMethod = .typeWithKeys
+        keys.held = [.command]
+
+        XCTAssertThrowsError(try typer.paste("Hello there.") { throw MovedToAnotherBox() }) {
+            XCTAssertTrue($0 is MovedToAnotherBox)
+        }
+
+        XCTAssertEqual(["wait 0.015"], log)
+        keys.secureInput = .on
+        XCTAssertThrowsError(try typer.paste("Hello there.")) {
+            XCTAssertEqual(PasteTyper.Failure.secureInput, $0 as? PasteTyper.Failure)
+        }
+
+        XCTAssertEqual([], keys.typed)
+        XCTAssertEqual(1, pasteboard.changeCount)
+    }
+
     // MARK: The system's pasteboard and keyboard
 
     func testTheTextIsMarkedForClipboardManagers() throws {

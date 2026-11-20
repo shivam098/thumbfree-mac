@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Builds ThumbFree.app, a universal (Apple silicon and Intel) release build signed ad hoc, and ThumbFree-<version>.dmg
-# with the app and a link to Applications, both in dist/. Needs a Mac with Xcode.
+# with the app and a link to Applications, both in dist/. The app's Contents/Resources has the licenses of what's
+# linked in: THIRD-PARTY-NOTICES.md and the speech engines' notices. Needs a Mac with Xcode.
 #
 #   scripts/make-app.sh [version]
 #
 # The version is a number such as 0.1.0: by default the latest v* tag's, else 0.1.0. An ad-hoc signature is enough to
-# test on a Mac (the first time: right-click › Open); a normal install needs Developer ID signing (docs/mac.md).
+# test on a Mac: the first time, try to open the app, then choose System Settings › Privacy & Security › Open Anyway.
+# A normal install needs Developer ID signing (docs/mac.md).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,11 +47,19 @@ binary="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/Thu
 lipo "$binary" -verify_arch arm64 x86_64
 echo "Architectures: $(lipo -archs "$binary")"
 
-# The app carries no libraries of its own yet, so the binary may link only the system's.
-if otool -L "$binary" | awk '/^\t/ { print $1 }' | grep -vE '^(/usr/lib/|/System/Library/)'; then
-  echo "error: ThumbFree links the libraries above, which the app doesn't carry" >&2
-  exit 1
-fi
+# The app carries no libraries of its own (the speech engines are linked in statically), so a binary may link only the
+# system's. Prints what it links.
+check_links() {
+  local libraries
+  libraries="$(otool -L "$1" | awk '/^\t/ { print $1 }' | sort -u)"
+  echo "$1 links:"
+  echo "$libraries" | sed 's/^/  /'
+  if grep -vE '^(/usr/lib/|/System/Library/)' <<<"$libraries"; then
+    echo "error: ThumbFree links the libraries above, which the app doesn't carry" >&2
+    exit 1
+  fi
+}
+check_links "$binary"
 
 echo "== Assembling ThumbFree.app"
 cp "$binary" "$app/Contents/MacOS/ThumbFree"
@@ -104,6 +114,20 @@ for size in 16 32 128 256 512; do
 done
 iconutil --convert icns --output "$app/Contents/Resources/AppIcon.icns" "$iconset"
 
+# The licenses of what's linked in: the repository's list, and each speech engine's notice, which SwiftPM unpacks from
+# the engine's zip next to its xcframework (.build/artifacts/<package>/<engine>/).
+cp THIRD-PARTY-NOTICES.md "$app/Contents/Resources/"
+for engine in CSherpaOnnx CWhisper; do
+  notice="$(find "$root/.build/artifacts" -path "*/$engine/$engine-NOTICE.txt" 2>/dev/null || true)"
+  if [[ -z "$notice" || "$notice" == *$'\n'* ]]; then
+    echo "error: expected one $engine-NOTICE.txt in .build/artifacts, unpacked from $engine.xcframework.zip, but" \
+      "found ${notice:-none}" >&2
+    exit 1
+  fi
+  cp "$notice" "$app/Contents/Resources/"
+done
+echo "Notices: $(cd "$app/Contents/Resources" && ls -- *NOTICE* | tr '\n' ' ')"
+
 echo "== Signing (ad hoc)"
 codesign --force --sign - "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
@@ -133,11 +157,18 @@ for attempt in 1 2 3; do
 done
 hdiutil verify "$dmg"
 
-# The app in the image is signed too.
+# The app in the image is signed too, links only the system's libraries and has the notices.
 mkdir -p "$volume"
 hdiutil attach -nobrowse -readonly -mountpoint "$volume" "$dmg" >/dev/null
 codesign --verify --deep --strict "$volume/ThumbFree.app"
 test -L "$volume/Applications"
+check_links "$volume/ThumbFree.app/Contents/MacOS/ThumbFree"
+for file in THIRD-PARTY-NOTICES.md CSherpaOnnx-NOTICE.txt CWhisper-NOTICE.txt; do
+  if [[ ! -s "$volume/ThumbFree.app/Contents/Resources/$file" ]]; then
+    echo "error: the app in the image has no Contents/Resources/$file" >&2
+    exit 1
+  fi
+done
 hdiutil detach "$volume" >/dev/null
 
 echo "== Done"

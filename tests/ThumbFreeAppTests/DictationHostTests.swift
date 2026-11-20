@@ -515,8 +515,8 @@ final class DictationHostTests: XCTestCase {
         XCTAssertTrue(services.history.entries().isEmpty)
     }
 
-    /// A password box found when the box is read again (the web page described it) refuses the dictation: the recording
-    /// stops, as for one found at the start, and it's said once.
+    /// A password box found when the box is read again, right before the first piece is typed (the web page described
+    /// it by then), refuses the dictation: the recording stops, as for one found at the start, and it's said once.
     func testAPasswordBoxFoundWhenAWebPageDescribesItStopsTheRecording() throws {
         fields.field = DictationField(
             window: Self.chat, app: FakeFields.app(Self.chat), isResolved: false, kind: "AXWebArea web unresolved")
@@ -525,8 +525,11 @@ final class DictationHostTests: XCTestCase {
                 window: Self.chat, app: FakeFields.app(Self.chat), password: true, multiLine: false,
                 kind: "AXTextField/AXSecureTextField single-line secure web")
         }
-        models.session.script = { accepted in accepted < 5 ? ([], "my secret") : (["My secret words."], "and") }
-        models.session.final = ["My secret words.", "And more."]
+        // Live typing types the finished phrases before the last one, so the first piece comes with the second phrase.
+        models.session.script = { accepted in
+            accepted < 5 ? ([], "my secret") : (["My secret words.", "And more."], "then")
+        }
+        models.session.final = ["My secret words.", "And more.", "Then."]
 
         host.beginDictationCapture(2)
         audio.speak(seconds: 1.2)

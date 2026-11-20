@@ -7,11 +7,6 @@ name: Engines
 # tag for new bytes: SwiftPM caches artifacts by URL); Package.swift pins URLs and checksums.
 on:
   workflow_dispatch:
-  # workflow_dispatch works only once this file is on main; until then, a push to mac-speech that changes the engine
-  # build runs it.
-  push:
-    branches: [mac-speech]
-    paths: [".github/workflows/engines.yml", "scripts/engines/**"]
 
 permissions:
   contents: read

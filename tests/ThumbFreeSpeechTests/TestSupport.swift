@@ -110,8 +110,8 @@ func containsIgnoringCase(_ text: String?, _ part: String) -> Bool {
 }
 
 /// Whether `text` matches the regular expression `pattern`.
-func matchesPattern(_ text: String, _ pattern: String, ignoringCase: Bool = false) -> Bool {
-    text.range(of: pattern, options: ignoringCase ? [.regularExpression, .caseInsensitive] : .regularExpression) != nil
+func matchesPattern(_ text: String, _ pattern: String) -> Bool {
+    text.range(of: pattern, options: .regularExpression) != nil
 }
 
 /// Runs `work` and prints how long it took (and the text it returned), so regressions show in the test log.

@@ -1,19 +1,10 @@
 import CWhisper
 import Foundation
-
-/// A stretch of speech, in seconds from the start of the audio.
-public struct SpeechRegion: Equatable, Sendable {
-    public let start: TimeInterval
-    public let end: TimeInterval
-
-    public init(start: TimeInterval, end: TimeInterval) {
-        self.start = start
-        self.end = end
-    }
-}
+import ThumbFreeCore
 
 /// Neural voice activity detection (Silero, via whisper.cpp). Distinguishes speech from music and noise, which an
 /// energy threshold cannot do. Used to drop non-speech utterances and to split ones background sound merged together.
+/// It finds the core's `SpeechRegion`s, for `SpeechSegments`, and `detect` is the closure `DictationPreview` takes.
 public final class SpeechDetector: @unchecked Sendable {
     private let context: OpaquePointer
     private let params: whisper_vad_params

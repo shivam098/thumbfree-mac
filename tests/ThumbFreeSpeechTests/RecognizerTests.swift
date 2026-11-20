@@ -7,11 +7,9 @@ import XCTest
 
 /// The engines on recorded speech (tests/audio), checked the way the Android on-device tests check them. Each test runs
 /// only when its model is installed (CI downloads them); timings are printed so regressions show.
-///
-/// The Windows tests also put some of the text through the core's word list and formatter ("GitHub CoPilot" → "GitHub
-/// Copilot", "comma" → ","). Those aren't in the Swift core yet, so the tests here check the recognizer's own words
-/// (as SpeechBench lists them for each engine).
 final class RecognizerTests: XCTestCase {
+    private static let words = ["GitHub Copilot", "Kubernetes"]
+
     func testSherpaRunsWithItsOwnOnnxruntimeLinkedIn() {
         print(ThumbFreeSpeech.engines)
         XCTAssertEqual(Sherpa.version, "2.0.1")
@@ -70,11 +68,13 @@ final class RecognizerTests: XCTestCase {
         let genres = try XCTUnwrap(try model.transcribe(Audio.read("genres.wav"), preview: false))
         XCTAssertTrue(containsIgnoringCase(genres, "videos of different genres"), genres)
 
-        // Windows checks the formatted text for "GitHub Copilot", "pull request," and no " um "; here, the words.
         let dictation = try Audio.read("dictation.wav")
-        let text = try XCTUnwrap(timed("parakeet 110m dictation") { try model.transcribe(dictation, preview: false) })
-        XCTAssertTrue(matchesPattern(text, "github ?co-? ?pilot", ignoringCase: true), text)
-        XCTAssertTrue(containsIgnoringCase(text, "pull request"), text)
+        let raw = try XCTUnwrap(timed("parakeet 110m dictation") { try model.transcribe(dictation, preview: false) })
+        let text = format(raw)
+        print("formatted: \(text)")
+        XCTAssertTrue(text.contains("GitHub Copilot"), text)
+        XCTAssertTrue(text.contains("pull request,"), text)
+        XCTAssertFalse(containsIgnoringCase(text, " um "), text)
 
         // Clips under a second are padded, not refused.
         XCTAssertNotNil(try model.transcribe(Audio.silence(ms: 100), preview: true))
@@ -105,8 +105,9 @@ final class RecognizerTests: XCTestCase {
         XCTAssertTrue(logs.trimmingCharacters(in: .whitespaces).hasSuffix("."), logs)
 
         let dictation = try Audio.read("dictation.wav")
-        let text = try XCTUnwrap(timed("parakeet 0.6b dictation") { try model.transcribe(dictation, preview: false) })
-        XCTAssertTrue(matchesPattern(text, "github ?co-? ?pilot", ignoringCase: true), text)
+        let raw = try XCTUnwrap(timed("parakeet 0.6b dictation") { try model.transcribe(dictation, preview: false) })
+        let text = format(raw)
+        XCTAssertTrue(text.contains("GitHub Copilot"), text)
         XCTAssertTrue(containsIgnoringCase(text, "pull request"), text)
     }
 
@@ -142,10 +143,9 @@ final class RecognizerTests: XCTestCase {
         let early = seen.prefix(seen.count / 2)
         XCTAssertTrue(early.contains { !$0.isEmpty }, "text arrives while speaking: \(seen.prefix(40))")
         XCTAssertTrue(phrases.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, "\(phrases)")
-
-        // Windows checks Vocabulary.Correct(text) for "GitHub Copilot"; here, the words Kroko wrote.
-        XCTAssertTrue(matchesPattern(text, "github ?co-? ?pilot", ignoringCase: true), text)
-        XCTAssertTrue(containsIgnoringCase(text, "pull request"), text)
+        let fixedText = Vocabulary.correct(text, Self.words)
+        XCTAssertTrue(fixedText.contains("GitHub Copilot"), fixedText)
+        XCTAssertTrue(containsIgnoringCase(fixedText, "pull request"), fixedText)
         XCTAssertTrue(text.contains { $0 == "." || $0 == "," || $0 == "?" }, "punctuated: \(text)")
         XCTAssertFalse(matchesPattern(text, "[.,?!;:]{2}"), text)
 
@@ -384,6 +384,44 @@ final class RecognizerTests: XCTestCase {
         XCTAssertThrowsError(try detector.detect(logs)) { XCTAssertEqual($0 as? SpeechError, .closed) }
     }
 
+    /// The app gives the detector to the core's DictationPreview as it is: a pause it finds ends a phrase.
+    func testTheDetectorGoesStraightIntoDictationPreview() async throws {
+        let path = try TestModels.require(ModelCatalog.vad)
+        let detector = try SpeechDetector(modelPath: path)
+        defer { detector.close() }
+
+        // Each transcription is the length of the audio it got, in seconds.
+        let rate = Decoding.sampleRate
+        let preview = DictationPreview(
+            transcribe: { String(format: "%.2f", Double($0.count) / Double(rate)) },
+            detect: detector.detect,
+            sampleRate: rate,
+            phrasePauseMs: 1200)
+        let logs = try Audio.read("send-logs.wav")
+        let audio = logs + Audio.silence(ms: 1500) + Audio.read("genres.wav")
+        let text = try await preview.update(audio)
+        print("preview: \(preview.phrases) + \(preview.tentative)")
+
+        // The phrase ends in the pause: after the speech the detector finds in send-logs.wav, before genres.wav.
+        let speechEnd = try XCTUnwrap(try detector.detect(logs).last).end
+        let end = Double(preview.committedSamples) / Double(rate)
+        XCTAssertGreaterThan(end, speechEnd)
+        XCTAssertLessThan(end, Double(logs.count) / Double(rate) + 1.5)
+        XCTAssertEqual(preview.phrases, [String(format: "%.2f", end)])
+        let rest = Double(audio.count - preview.committedSamples) / Double(rate)
+        XCTAssertEqual(preview.tentative, String(format: "%.2f", rest))
+        XCTAssertEqual(text, (preview.phrases + [preview.tentative]).joined(separator: " "))
+
+        // What the detector throws stops the update.
+        detector.close()
+        do {
+            _ = try await preview.update(Audio.silence(ms: 1000))
+            XCTFail("a closed detector stops the update")
+        } catch {
+            XCTAssertEqual(error as? SpeechError, .closed)
+        }
+    }
+
     func testReadsTheRecordingsAsSamplesAndRefusesOtherFormats() throws {
         let samples = try Audio.read("send-logs.wav")
         XCTAssertEqual(Double(samples.count) / Double(Decoding.sampleRate), 2.9, accuracy: 0.1)
@@ -407,6 +445,11 @@ final class RecognizerTests: XCTestCase {
         let tiny = scratch.file("16k.wav")
         try wav(rate: 16000, samples: [0, 16384, -32768]).write(to: URL(fileURLWithPath: tiny))
         XCTAssertEqual(try WavFile.readPcm16Mono16k(tiny), [0, 0.5, -1])
+    }
+
+    /// The text as the app types it (C#'s Format): cleaned, the listed words written as listed, then formatted.
+    private func format(_ raw: String) -> String {
+        DictationFormatter().format(Vocabulary.correct(TranscriptText.clean(raw), Self.words))
     }
 
     /// Starts a transcription on another thread and aborts it 50 ms in (it takes several times that): the call returns

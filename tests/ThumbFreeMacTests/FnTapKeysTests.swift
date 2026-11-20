@@ -176,4 +176,34 @@ final class FnTapKeysTests: XCTestCase {
         XCTAssertFalse(keys.isRecording)
         XCTAssertEqual([nil, .start], tap(&keys))
     }
+
+    /// Secure Input hides the other key of Fn+↑ or Fn+Delete in a password field, so it looks like a tap.
+    func testUnderSecureInputAPressNeverStartsButStillFinishes() {
+        var keys = FnTapKeys()
+        for (atPress, atRelease) in [(true, true), (true, false), (false, true)] {
+            XCTAssertNil(keys.process(.fn, down: true, secureInput: atPress).command)
+            XCTAssertNil(keys.process(.fn, down: false, secureInput: atRelease).command)
+        }
+        XCTAssertFalse(keys.isRecording)
+
+        // Already recording: stopping the microphone is always safe.
+        XCTAssertEqual([nil, .start], tap(&keys))
+        XCTAssertNil(keys.process(.fn, down: true, secureInput: true).command)
+        XCTAssertEqual(.finish, keys.process(.fn, down: false, secureInput: true).command)
+        XCTAssertFalse(keys.isRecording)
+        XCTAssertEqual([nil, .start], tap(&keys))
+    }
+
+    /// A user switch mid-press, or another tap keeping the release: modifier keys don't repeat, so the next press of
+    /// the key is a new one.
+    func testALostReleaseDoesNotLeaveTheKeysStuck() {
+        var keys = FnTapKeys()
+        _ = press(&keys)
+        XCTAssertNil(keys.process(.other, down: true).command)
+        XCTAssertEqual([nil, .start], tap(&keys))
+
+        _ = press(&keys)
+        XCTAssertEqual([nil, .finish], tap(&keys))
+        XCTAssertFalse(keys.isRecording)
+    }
 }

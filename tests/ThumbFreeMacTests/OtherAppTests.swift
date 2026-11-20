@@ -1,7 +1,8 @@
 import XCTest
 @testable import ThumbFreeMac
 
-/// The running apps, as the tests launch and quit them.
+/// The running apps, as the tests launch and quit them, reported the way SystemWorkspace reports changes to
+/// NSWorkspace's list of running apps.
 final class FakeOtherAppWorkspace: OtherApp.Workspace {
     private(set) var running: [String: [pid_t]] = [:]
     private var handler: (@MainActor @Sendable (OtherApp.Change, String?, pid_t) -> Void)?

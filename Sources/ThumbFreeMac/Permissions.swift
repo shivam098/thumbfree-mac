@@ -10,9 +10,13 @@ public struct Permissions {
     public enum Kind: String, CaseIterable, Sendable {
         /// Hearing you.
         case microphone
-        /// Reading the text box and typing into it. It also lets the Fn tap keep the Esc that cancels from the app.
+        /// Reading the text box (the Accessibility API).
         case accessibility
-        /// Seeing Fn when Accessibility isn't granted (a listen-only event tap).
+        /// Sending keys: the ⌘V that types, and the event tap that keeps the Esc that cancels from the app. macOS
+        /// checks it apart from `accessibility` (`CGPreflightPostEventAccess`), but System Settings shows both as the
+        /// app's Accessibility switch.
+        case postEvents
+        /// Seeing Fn when the app may not post events (a listen-only event tap).
         case inputMonitoring
     }
 
@@ -31,6 +35,10 @@ public struct Permissions {
         func requestMicrophone(_ completion: @escaping @Sendable (Bool) -> Void)
         /// AXIsProcessTrustedWithOptions. With `prompt`, macOS offers to open System Settings when not trusted.
         func isAccessibilityTrusted(prompt: Bool) -> Bool
+        /// CGPreflightPostEventAccess.
+        func canPostEvents() -> Bool
+        /// CGRequestPostEventAccess: macOS's prompt, which leads to the Accessibility list, the first time.
+        func requestPostEvents() -> Bool
         /// CGPreflightListenEventAccess.
         func canListenToEvents() -> Bool
         /// CGRequestListenEventAccess: macOS's Input Monitoring prompt, the first time.
@@ -59,14 +67,16 @@ public struct Permissions {
             }
         case .accessibility:
             return system.isAccessibilityTrusted(prompt: false) ? .granted : .denied
+        case .postEvents:
+            return system.canPostEvents() ? .granted : .denied
         case .inputMonitoring:
             return system.canListenToEvents() ? .granted : .denied
         }
     }
 
-    /// Asks for `kind` the way macOS allows: its microphone prompt the first time; its Accessibility or Input
-    /// Monitoring prompt, which leads to System Settings. `completion` gets the status after, on the main thread.
-    /// When macOS has already asked, nothing shows: `openSettings` is the way then.
+    /// Asks for `kind` the way macOS allows: its microphone prompt the first time; its Accessibility, event-posting or
+    /// Input Monitoring prompt, which leads to System Settings. `completion` gets the status after, on the main
+    /// thread. When macOS has already asked, nothing shows: `openSettings` is the way then.
     public func request(_ kind: Kind, completion: @escaping @MainActor @Sendable (Status) -> Void) {
         switch kind {
         case .microphone:
@@ -81,6 +91,9 @@ public struct Permissions {
             }
         case .accessibility:
             Permissions.finish(system.isAccessibilityTrusted(prompt: true) ? .granted : .denied, completion)
+        case .postEvents:
+            let granted = system.canPostEvents() || system.requestPostEvents()
+            Permissions.finish(granted ? .granted : .denied, completion)
         case .inputMonitoring:
             let granted = system.canListenToEvents() || system.requestListenToEvents()
             Permissions.finish(granted ? .granted : .denied, completion)
@@ -99,7 +112,7 @@ public struct Permissions {
         switch kind {
         case .microphone:
             list = "Privacy_Microphone"
-        case .accessibility:
+        case .accessibility, .postEvents:
             list = "Privacy_Accessibility"
         case .inputMonitoring:
             list = "Privacy_ListenEvent"
@@ -133,6 +146,14 @@ extension Permissions {
         public func isAccessibilityTrusted(prompt: Bool) -> Bool {
             // The key is kAXTrustedCheckOptionPrompt's value; the constant is a mutable global in Swift.
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary)
+        }
+
+        public func canPostEvents() -> Bool {
+            CGPreflightPostEventAccess()
+        }
+
+        public func requestPostEvents() -> Bool {
+            CGRequestPostEventAccess()
         }
 
         public func canListenToEvents() -> Bool {

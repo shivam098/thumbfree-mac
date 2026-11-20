@@ -3,8 +3,8 @@ import Foundation
 
 /// Whether the other Mac app is running: ThumbFree watches for Jarvis and Jarvis for ThumbFree. Both use Fn, so with
 /// both running every dictation would be typed twice, and each app warns (on Windows, ThumbFree warns the same way at
-/// launch about Voice Assistant). NSRunningApplication tells at the start; the workspace's notifications when an app
-/// launches or quits keep it current.
+/// launch about Voice Assistant). NSRunningApplication tells at the start; NSWorkspace's list of running apps, watched
+/// with key-value observing, keeps it current.
 @MainActor
 public final class OtherApp {
     /// The bundle identifier watched for.
@@ -97,9 +97,10 @@ extension OtherApp {
         func stopObserving()
     }
 
-    /// NSRunningApplication and the workspace's notifications.
+    /// NSRunningApplication, and NSWorkspace's list of running apps watched with key-value observing. (The workspace's
+    /// launch and quit notifications aren't posted for apps with LSUIElement, which ThumbFree and Jarvis both are.)
     public final class SystemWorkspace: Workspace {
-        private var observers: [NSObjectProtocol] = []
+        private var observation: NSKeyValueObservation?
 
         public init() {}
 
@@ -115,31 +116,40 @@ extension OtherApp {
 
         public func observe(_ handler: @escaping @MainActor @Sendable (OtherApp.Change, String?, pid_t) -> Void) {
             stopObserving()
-            let center = NSWorkspace.shared.notificationCenter
-            let notifications: [(NSNotification.Name, OtherApp.Change)] = [
-                (NSWorkspace.didLaunchApplicationNotification, .launched),
-                (NSWorkspace.didTerminateApplicationNotification, .quit),
-            ]
-            for (name, change) in notifications {
-                observers.append(center.addObserver(forName: name, object: nil, queue: .main) { notification in
-                    guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                    else { return }
-                    let bundleIdentifier = app.bundleIdentifier
-                    let processIdentifier = app.processIdentifier
+            observation = NSWorkspace.shared.observe(\.runningApplications, options: [.old, .new]) { _, change in
+                // Apps that launched come as new values, apps that quit as old ones, and a whole new list as both.
+                let before = SystemWorkspace.apps(change.oldValue)
+                let after = SystemWorkspace.apps(change.newValue)
+                let launched = after.subtracting(before).map { (OtherApp.Change.launched, $0) }
+                let quit = before.subtracting(after).map { (OtherApp.Change.quit, $0) }
+                let changes = launched + quit
+                guard !changes.isEmpty else { return }
+                // The list changes on the main run loop; the handler runs on the main thread in any case.
+                DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        handler(change, bundleIdentifier, processIdentifier)
+                        for (kind, app) in changes {
+                            handler(kind, app.bundleIdentifier, app.processIdentifier)
+                        }
                     }
-                })
+                }
             }
         }
 
         public func stopObserving() {
-            let center = NSWorkspace.shared.notificationCenter
-            for observer in observers {
-                center.removeObserver(observer)
-            }
+            observation?.invalidate()
+            observation = nil
+        }
 
-            observers = []
+        /// A running app, as far as OtherApp cares.
+        private struct App: Hashable, Sendable {
+            let bundleIdentifier: String?
+            let processIdentifier: pid_t
+        }
+
+        private static func apps(_ list: [NSRunningApplication]?) -> Set<App> {
+            Set((list ?? []).map { app in
+                App(bundleIdentifier: app.bundleIdentifier, processIdentifier: app.processIdentifier)
+            })
         }
     }
 }

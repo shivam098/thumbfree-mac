@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
@@ -11,19 +12,24 @@ import Foundation
 /// too, so only that key code counts as Fn.
 ///
 /// Esc: the Esc that cancels a recording is kept from the app, as on Windows, and only an active (filtering) tap can
-/// do that. An active tap needs Accessibility, which typing into other apps needs anyway, so the tap is active when
-/// the app has it. Without Accessibility it falls back to a listen-only tap, which needs Input Monitoring: the keys
-/// work the same, but the app sees the Esc too. The tap runs on a thread of its own, so a busy main thread never holds
-/// up anyone's typing, and it never keeps any other event. It doesn't ask for either permission (Permissions does).
+/// do that. An active tap needs the right to post events, which typing into other apps needs anyway (System Settings
+/// shows it under Accessibility), so the tap is active when the app has it. Without it the tap is listen-only, which
+/// needs Input Monitoring: the keys work the same, but the app sees the Esc too. The tap runs on a thread of its own,
+/// so a busy main thread never holds up anyone's typing, and it never keeps any other event. It doesn't ask for either
+/// permission (Permissions does).
+///
+/// Secure Input (a password field, Terminal's Secure Keyboard Entry, a password manager, the lock screen) hides
+/// key-downs from every event tap but not modifier keys, so a press of the tap key there never starts dictation; see
+/// `FnTapKeys.process`.
 @MainActor
 public final class HotkeyTap {
     /// How the tap sees the keys.
     public enum Mode: Equatable, Sendable {
-        /// No tap: the app has neither Accessibility nor Input Monitoring.
+        /// No tap: the app may neither post nor listen to events.
         case off
         /// A passive tap (Input Monitoring): Esc cancels, but still reaches the app.
         case listenOnly
-        /// An active tap (Accessibility): the Esc that cancels is kept from the app.
+        /// An active tap (the right to post events): the Esc that cancels is kept from the app.
         case active
     }
 
@@ -59,14 +65,19 @@ public final class HotkeyTap {
     private let core: Core
     private let source: any EventSource
 
-    /// - Parameter source: Where the key events come from; the Quartz event tap when nil.
-    public init(tapKey: FnTapKeys.TapKey = .fn, source: (any EventSource)? = nil) {
-        core = Core(tapKey: tapKey)
+    /// - Parameters:
+    ///   - source: Where the key events come from; the Quartz event tap when nil.
+    ///   - secureInput: Whether Secure Event Input is on; `IsSecureEventInputEnabled()` when nil. It's asked on the
+    ///     tap's thread, only when the tap key goes down or up.
+    public init(
+        tapKey: FnTapKeys.TapKey = .fn, source: (any EventSource)? = nil, secureInput: (@Sendable () -> Bool)? = nil
+    ) {
+        core = Core(tapKey: tapKey, secureInput: secureInput ?? { IsSecureEventInputEnabled() })
         self.source = source ?? SystemTap()
     }
 
-    /// Installs the tap, active if the app has Accessibility, else listen-only if it has Input Monitoring. Call it
-    /// again once a permission has been granted: the tap is made again for the new permissions.
+    /// Installs the tap: active if the app may post events, else listen-only if it has Input Monitoring. Call it again
+    /// once a permission has been granted: the tap is made again for the new permissions.
     @discardableResult
     public func start() -> Mode {
         source.stop()
@@ -106,6 +117,10 @@ extension HotkeyTap {
             case flagsChanged
             /// A mouse button went down.
             case mouseDown
+            /// A mouse button went up, such as at the end of an Option-drag.
+            case mouseUp
+            /// The person scrolled (not the scrolling that carries on after a flick), such as an Option-scroll zoom.
+            case scroll
             /// A media or brightness key (a system-defined event) went down or up.
             case mediaKey(down: Bool)
             /// macOS turned the tap off (it took too long, or because of user input) and it was turned back on, so
@@ -116,6 +131,7 @@ extension HotkeyTap {
         public var kind: Kind
         /// `kCGKeyboardEventKeycode`, for key and flags-changed events.
         public var keyCode: Int64
+        /// The modifier flags, for key and flags-changed events.
         public var flags: CGEventFlags
         /// Posted by this app, like the ⌘V that types a dictation: never a dictation key. (Windows likewise ignores
         /// injected keys.)
@@ -128,7 +144,8 @@ extension HotkeyTap {
             self.fromThisApp = fromThisApp
         }
 
-        /// Which key went down or up as far as FnTapKeys cares; nil for events the dictation keys ignore.
+        /// Which key went down or up as far as FnTapKeys cares; nil for events the dictation keys ignore. A click or
+        /// a scroll counts as another key going down.
         public var keyChange: (key: FnTapKeys.Key, down: Bool)? {
             let key: FnTapKeys.Key = keyCode == Code.escape ? .escape : .other
             switch kind {
@@ -138,12 +155,30 @@ extension HotkeyTap {
                 return (key, false)
             case .flagsChanged:
                 return modifierChange
-            case .mouseDown:
+            case .mouseDown, .mouseUp, .scroll:
                 return (FnTapKeys.Key.other, true)
             case .mediaKey(let down):
                 return (FnTapKeys.Key.other, down)
             case .tapReenabled:
                 return nil
+            }
+        }
+
+        /// The tap key's own event: the flags-changed event for its key code.
+        public func isChange(of tapKey: FnTapKeys.TapKey) -> Bool {
+            kind == .flagsChanged && keyCode == (tapKey == .fn ? Code.function : Code.rightOption)
+        }
+
+        /// The flags of another key's event say the tap key is up. While a press is in progress, that means its
+        /// release was lost. (Only key and flags-changed events carry the flags; a missing flag proves the key is up,
+        /// while the Fn flag alone doesn't prove Fn is down, since arrows carry it too.)
+        public func showsUp(_ tapKey: FnTapKeys.TapKey) -> Bool {
+            switch kind {
+            case .keyDown, .keyUp, .flagsChanged:
+                guard !isChange(of: tapKey) else { return false }
+                return tapKey == .fn ? !flags.contains(.maskSecondaryFn) : !rightOptionDown
+            default:
+                return false
             }
         }
 
@@ -201,13 +236,15 @@ extension HotkeyTap {
     /// are set on the main thread. Commands go to the main queue in the order they happen.
     final class Core: @unchecked Sendable {
         private let lock = NSLock()
+        private let secureInput: @Sendable () -> Bool
         private var keys: FnTapKeys
         private var enabled = true
         private var swallowing = false
         private var handler: (@MainActor (FnTapKeys.Command) -> Void)?
 
-        init(tapKey: FnTapKeys.TapKey) {
+        init(tapKey: FnTapKeys.TapKey, secureInput: @escaping @Sendable () -> Bool) {
             keys = FnTapKeys(tapKey: tapKey)
+            self.secureInput = secureInput
         }
 
         var onCommand: (@MainActor (FnTapKeys.Command) -> Void)? {
@@ -247,15 +284,17 @@ extension HotkeyTap {
 
         /// The tap's thread: runs the keys on `event`. True when the event must not reach the app.
         func handle(_ event: HotkeyTap.Event) -> Bool {
+            guard !event.fromThisApp else { return false }
+            // Only the tap key's own presses ask about Secure Input, outside the lock.
+            let secure = event.isChange(of: tapKey) && secureInput()
             let result: FnTapKeys.Result = locked {
-                guard enabled, !event.fromThisApp else { return FnTapKeys.Result() }
-                if event.kind == .tapReenabled {
+                guard enabled else { return FnTapKeys.Result() }
+                if event.kind == .tapReenabled || event.showsUp(keys.tapKey) {
                     keys.reset()
-                    return FnTapKeys.Result()
                 }
 
                 guard let change = event.keyChange else { return FnTapKeys.Result() }
-                var processed = keys.process(change.key, down: change.down)
+                var processed = keys.process(change.key, down: change.down, secureInput: secure)
                 processed.swallow = processed.swallow && swallowing
                 return processed
             }
@@ -294,11 +333,15 @@ extension HotkeyTap {
 
         public func start(_ handler: @escaping @Sendable (HotkeyTap.Event) -> Bool) -> HotkeyTap.Mode {
             stop()
-            // tapCreate quietly drops the key events it isn't allowed to see (and keeps the mouse ones), so the
-            // permissions decide which tap to try. Accessibility covers both kinds; Input Monitoring only listening.
-            let trusted = AXIsProcessTrusted()
-            var modes: [HotkeyTap.Mode] = trusted ? [.active] : []
-            if trusted || CGPreflightListenEventAccess() {
+            // tapCreate quietly drops the key events it isn't allowed to see (and would still return a tap for the
+            // mouse ones), so the permissions decide which tap to try: an active tap needs the right to post events,
+            // a listen-only one the right to listen (Input Monitoring).
+            var modes: [HotkeyTap.Mode] = []
+            if CGPreflightPostEventAccess() {
+                modes.append(.active)
+            }
+
+            if CGPreflightListenEventAccess() {
                 modes.append(.listenOnly)
             }
 
@@ -325,10 +368,12 @@ extension HotkeyTap {
         /// pressed with Fn when "Use F1, F2, etc. keys as standard function keys" is on.
         static let systemDefined: UInt32 = 14
 
-        /// The events the keys need.
+        /// The events the keys need: mouse buttons and the scroll wheel too, since Option-click, Option-drag and
+        /// Option-scroll are shortcuts.
         static let mask: CGEventMask = {
             let types: [CGEventType] = [
-                .keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                .keyDown, .keyUp, .flagsChanged, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+                .otherMouseDown, .otherMouseUp, .scrollWheel,
             ]
             return types.reduce(CGEventMask(1) << TapThread.systemDefined) { mask, type in
                 mask | (CGEventMask(1) << type.rawValue)
@@ -451,6 +496,13 @@ extension HotkeyTap.Event {
                       fromThisApp: fromThisApp)
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             self.init(.mouseDown, fromThisApp: fromThisApp)
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            self.init(.mouseUp, fromThisApp: fromThisApp)
+        case .scrollWheel:
+            // The scrolling that carries on after a trackpad flick isn't the person's doing: a tap right after it
+            // still counts.
+            guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return nil }
+            self.init(.scroll, fromThisApp: fromThisApp)
         default:
             // Media keys are system-defined events of subtype 8 (NX_SUBTYPE_AUX_CONTROL_BUTTONS); data1 holds the
             // key in its high 16 bits and its state in bits 8 to 15: 0xA down, 0xB up.

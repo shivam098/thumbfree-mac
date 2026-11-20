@@ -33,6 +33,35 @@ final class FakeFnEventSource: HotkeyTap.EventSource, @unchecked Sendable {
     }
 }
 
+/// Whether Secure Input is on, as the tests set it, and how often the tap asked.
+final class FakeSecureInput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+    private var questions = 0
+
+    var isOn: Bool {
+        get { locked { on } }
+        set { locked { on = newValue } }
+    }
+
+    var asked: Int {
+        locked { questions }
+    }
+
+    func check() -> Bool {
+        locked {
+            questions += 1
+            return on
+        }
+    }
+
+    private func locked<Value>(_ body: () -> Value) -> Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 private typealias HotkeyEvent = HotkeyTap.Event
 private typealias HotkeyCode = HotkeyTap.Event.Code
 
@@ -75,8 +104,10 @@ final class HotkeyTapTests: XCTestCase {
     }
 
     @MainActor
-    private func makeTap(_ source: FakeFnEventSource, tapKey: FnTapKeys.TapKey = .fn) -> (HotkeyTap, Commands) {
-        let tap = HotkeyTap(tapKey: tapKey, source: source)
+    private func makeTap(
+        _ source: FakeFnEventSource, tapKey: FnTapKeys.TapKey = .fn, secureInput: FakeSecureInput = FakeSecureInput()
+    ) -> (HotkeyTap, Commands) {
+        let tap = HotkeyTap(tapKey: tapKey, source: source, secureInput: { secureInput.check() })
         let commands = Commands()
         tap.onCommand = { command in
             commands.list.append(command)
@@ -100,7 +131,7 @@ final class HotkeyTapTests: XCTestCase {
         XCTAssertNil(change(modifier(0x7B, .maskSecondaryFn)))
     }
 
-    func testOtherModifiersMediaKeysAndClicksAreOtherKeys() {
+    func testOtherModifiersMediaKeysClicksAndScrollingAreOtherKeys() {
         XCTAssertEqual("other down", change(modifier(HotkeyCode.shift, .maskShift)))
         XCTAssertEqual("other up", change(modifier(HotkeyCode.shift)))
         XCTAssertEqual("other down", change(modifier(HotkeyCode.rightCommand, .maskCommand)))
@@ -109,8 +140,29 @@ final class HotkeyTapTests: XCTestCase {
         XCTAssertEqual("other down", change(modifier(HotkeyCode.capsLock)))
         XCTAssertEqual("other down", change(HotkeyEvent(.mediaKey(down: true))))
         XCTAssertEqual("other up", change(HotkeyEvent(.mediaKey(down: false))))
+        // A click or a scroll is input, like a key going down.
         XCTAssertEqual("other down", change(HotkeyEvent(.mouseDown)))
+        XCTAssertEqual("other down", change(HotkeyEvent(.mouseUp)))
+        XCTAssertEqual("other down", change(HotkeyEvent(.scroll)))
         XCTAssertNil(change(HotkeyEvent(.tapReenabled)))
+    }
+
+    func testOnlyTheFlagsOfAnotherKeyShowTheTapKeyUp() {
+        XCTAssertTrue(modifier(HotkeyCode.shift, .maskShift).showsUp(.fn))
+        XCTAssertFalse(modifier(HotkeyCode.shift, [.maskShift, .maskSecondaryFn]).showsUp(.fn))
+        XCTAssertTrue(escDown.showsUp(.fn))
+        XCTAssertFalse(arrowKey(down: true).showsUp(.fn))
+        // Its own event says up or down itself; a click or a media key carries no flags here.
+        XCTAssertFalse(fnUp.showsUp(.fn))
+        XCTAssertFalse(HotkeyEvent(.mouseDown).showsUp(.fn))
+        XCTAssertFalse(HotkeyEvent(.mediaKey(down: true)).showsUp(.fn))
+
+        XCTAssertTrue(escDown.showsUp(.rightOption))
+        XCTAssertFalse(HotkeyEvent(.keyDown, keyCode: 0x0E, flags: rightOptionDown.flags).showsUp(.rightOption))
+        XCTAssertFalse(rightOptionUp.showsUp(.rightOption))
+        XCTAssertTrue(fnDown.isChange(of: .fn))
+        XCTAssertFalse(fnDown.isChange(of: .rightOption))
+        XCTAssertTrue(rightOptionUp.isChange(of: .rightOption))
     }
 
     func testRightOptionIsToldFromLeftOptionByItsOwnFlag() {
@@ -252,6 +304,71 @@ final class HotkeyTapTests: XCTestCase {
         source.send([rightOptionDown, rightOptionUp, fnDown, fnUp])
         drainMainQueue()
         XCTAssertEqual([.start, .finish, .start], commands.list)
+    }
+
+    @MainActor
+    func testClicksAndScrollingWhileRightOptionIsHeldAreShortcuts() {
+        let source = FakeFnEventSource()
+        let (tap, commands) = makeTap(source, tapKey: .rightOption)
+
+        // A Finder Option-drag ends with the button going up; an Option-scroll zooms.
+        source.send([HotkeyEvent(.mouseDown), rightOptionDown, HotkeyEvent(.mouseUp), rightOptionUp])
+        source.send([rightOptionDown, HotkeyEvent(.scroll), HotkeyEvent(.scroll), rightOptionUp])
+        drainMainQueue()
+        XCTAssertEqual([], commands.list)
+
+        source.send([rightOptionDown, rightOptionUp])
+        drainMainQueue()
+        XCTAssertEqual([.start], commands.list)
+        XCTAssertTrue(tap.isRecording)
+    }
+
+    @MainActor
+    func testUnderSecureInputFnNeverStartsDictationButStillFinishesIt() {
+        let source = FakeFnEventSource()
+        let secure = FakeSecureInput()
+        let (tap, commands) = makeTap(source, secureInput: secure)
+
+        // Fn+↑ in a password field: the arrow is hidden, so it looks like a tap. On all along, only when Fn goes
+        // down, or only when it's let go.
+        secure.isOn = true
+        source.send([fnDown, fnUp, fnDown])
+        secure.isOn = false
+        source.send([fnUp, fnDown])
+        secure.isOn = true
+        source.send(fnUp)
+        drainMainQueue()
+        XCTAssertEqual([], commands.list)
+        XCTAssertFalse(tap.isRecording)
+
+        secure.isOn = false
+        source.send([fnDown, fnUp])
+        secure.isOn = true
+        source.send([fnDown, fnUp])
+        drainMainQueue()
+        XCTAssertEqual([.start, .finish], commands.list)
+
+        // It's asked only when Fn goes down or up.
+        XCTAssertEqual(10, secure.asked)
+        source.send([arrowKey(down: true), arrowKey(down: false), escDown, HotkeyEvent(.scroll), rightOptionDown])
+        XCTAssertEqual(10, secure.asked)
+    }
+
+    @MainActor
+    func testAReleaseLostMidPressIsForgotten() {
+        let source = FakeFnEventSource()
+        let (tap, commands) = makeTap(source)
+        source.send([fnDown, fnUp])
+
+        // The finishing press loses its release (a user switch): Esc, which carries no Fn flag, still cancels.
+        source.send(fnDown)
+        XCTAssertTrue(source.send(escDown))
+        // Lost again: Fn doesn't repeat, so the next press of Fn is a new tap.
+        source.send([fnDown, fnDown, fnUp])
+        drainMainQueue()
+
+        XCTAssertEqual([.start, .cancel, .start], commands.list)
+        XCTAssertTrue(tap.isRecording)
     }
 
     @MainActor

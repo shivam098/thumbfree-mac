@@ -8,6 +8,9 @@ final class FakePermissionsSystem: Permissions.System, @unchecked Sendable {
     /// The person's answer to the microphone prompt.
     var allowsMicrophone = true
     var trusted = false
+    var posting = false
+    /// The person's answer to the event-posting prompt.
+    var allowsPosting = false
     var listening = false
     /// The person's answer to the Input Monitoring prompt.
     var allowsListening = false
@@ -33,6 +36,16 @@ final class FakePermissionsSystem: Permissions.System, @unchecked Sendable {
         }
 
         return trusted
+    }
+
+    func canPostEvents() -> Bool {
+        posting
+    }
+
+    func requestPostEvents() -> Bool {
+        prompts.append(.postEvents)
+        posting = allowsPosting
+        return posting
     }
 
     func canListenToEvents() -> Bool {
@@ -85,10 +98,15 @@ final class PermissionsTests: XCTestCase {
         }
 
         XCTAssertEqual(.denied, permissions.status(.accessibility))
+        XCTAssertEqual(.denied, permissions.status(.postEvents))
         XCTAssertEqual(.denied, permissions.status(.inputMonitoring))
         system.trusted = true
-        system.listening = true
         XCTAssertEqual(.granted, permissions.status(.accessibility))
+        // Checked apart, even though System Settings shows both as one switch.
+        XCTAssertEqual(.denied, permissions.status(.postEvents))
+        system.posting = true
+        system.listening = true
+        XCTAssertEqual(.granted, permissions.status(.postEvents))
         XCTAssertEqual(.granted, permissions.status(.inputMonitoring))
         XCTAssertEqual([], system.prompts)
     }
@@ -103,6 +121,7 @@ final class PermissionsTests: XCTestCase {
 
         XCTAssertEqual([
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
         ], system.opened)
@@ -126,20 +145,24 @@ final class PermissionsTests: XCTestCase {
     }
 
     @MainActor
-    func testAccessibilityAndInputMonitoringShowMacOSsPromptUntilGranted() {
+    func testAccessibilityPostingAndInputMonitoringShowMacOSsPromptUntilGranted() {
         let system = FakePermissionsSystem()
         let permissions = Permissions(system: system)
 
         XCTAssertEqual(.denied, request(.accessibility, from: permissions))
+        XCTAssertEqual(.denied, request(.postEvents, from: permissions))
         XCTAssertEqual(.denied, request(.inputMonitoring, from: permissions))
-        XCTAssertEqual([.accessibility, .inputMonitoring], system.prompts)
+        XCTAssertEqual([.accessibility, .postEvents, .inputMonitoring], system.prompts)
 
         system.trusted = true
+        system.allowsPosting = true
         system.allowsListening = true
         XCTAssertEqual(.granted, request(.accessibility, from: permissions))
+        XCTAssertEqual(.granted, request(.postEvents, from: permissions))
         XCTAssertEqual(.granted, request(.inputMonitoring, from: permissions))
         // Granted already: no more prompts.
+        XCTAssertEqual(.granted, request(.postEvents, from: permissions))
         XCTAssertEqual(.granted, request(.inputMonitoring, from: permissions))
-        XCTAssertEqual([.accessibility, .inputMonitoring, .inputMonitoring], system.prompts)
+        XCTAssertEqual([.accessibility, .postEvents, .inputMonitoring, .postEvents, .inputMonitoring], system.prompts)
     }
 }

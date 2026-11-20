@@ -1,14 +1,15 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// The microphone as 16 kHz mono Float32 samples, the format every speech model takes, in chunks of 30 ms (480
 /// samples, the Windows app's microphone buffers), each with its level for the pill's meter. Audio stays in memory and
 /// is never written to disk.
 ///
-/// AVAudioEngine's input is converted with AVAudioConverter. When the input device or its format changes
-/// (`AVAudioEngineConfigurationChange`), the capture starts again on the new one by itself. The conversion
-/// (Converter), the chunks (Chunker), the level (`level(of:)`) and the silent-microphone check (SilenceWatch) are
-/// separate so they can be tested with made-up buffers; the microphone itself is behind Input.
+/// AVAudioEngine's input is converted with AVAudioConverter. When the input device changes (another default input, or
+/// a new rate or channel count), the capture starts again on the new one by itself. The conversion (Converter), the
+/// chunks (Chunker), the level (`level(of:)`) and the silent-microphone check (SilenceWatch) are separate so they can
+/// be tested with made-up buffers; the microphone itself is behind Input.
 ///
 /// Without the Microphone permission (Permissions), macOS sends silence, which SilenceWatch reports.
 @MainActor
@@ -121,7 +122,8 @@ extension AudioCapture {
     /// Where the audio comes from: AVAudioEngine's input (EngineInput), or a fake in tests.
     public protocol Input: AnyObject {
         /// Starts the microphone. `buffers` gets its audio on an audio thread; `changed` runs on the main thread when
-        /// the device or its format changed and the input stopped by itself. Throws when it can't start.
+        /// the input device changed (another default input, or a new format), so the input must start again. Throws
+        /// when it can't start.
         func start(
             buffers: @escaping @Sendable (AVAudioPCMBuffer) -> Void,
             changed: @escaping @MainActor @Sendable () -> Void) throws
@@ -134,6 +136,7 @@ extension AudioCapture {
     public final class EngineInput: Input {
         private var engine: AVAudioEngine?
         private var observer: NSObjectProtocol?
+        private let defaultInput = DefaultInputWatcher()
 
         public init() {}
 
@@ -169,10 +172,14 @@ extension AudioCapture {
                 }
             }
 
+            // The engine says so only when the rate or the channels change: a new default input with the same format
+            // (AirPods connecting) comes from Core Audio.
+            defaultInput.start(changed)
             engine.prepare()
             do {
                 try engine.start()
             } catch {
+                defaultInput.stop()
                 NotificationCenter.default.removeObserver(observer)
                 node.removeTap(onBus: 0)
                 throw error
@@ -183,6 +190,7 @@ extension AudioCapture {
         }
 
         public func stop() {
+            defaultInput.stop()
             if let observer {
                 NotificationCenter.default.removeObserver(observer)
             }
@@ -192,6 +200,49 @@ extension AudioCapture {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
             self.engine = nil
+        }
+    }
+
+    /// Core Audio's default input device: `changed` runs on the main thread when it's another device.
+    final class DefaultInputWatcher {
+        private typealias Listener = @convention(block) (UInt32, UnsafePointer<AudioObjectPropertyAddress>) -> Void
+
+        /// Kept as a block, so the block taken off Core Audio is the very one given to it.
+        private var listener: Listener?
+
+        deinit {
+            stop()
+        }
+
+        /// False when Core Audio refused the listener.
+        @discardableResult
+        func start(_ changed: @escaping @MainActor @Sendable () -> Void) -> Bool {
+            stop()
+            var address = DefaultInputWatcher.address
+            let listener: Listener = { _, _ in
+                // On the main queue, as asked below.
+                MainActor.assumeIsolated {
+                    changed()
+                }
+            }
+
+            let system = AudioObjectID(kAudioObjectSystemObject)
+            guard AudioObjectAddPropertyListenerBlock(system, &address, .main, listener) == noErr else { return false }
+            self.listener = listener
+            return true
+        }
+
+        func stop() {
+            guard let listener else { return }
+            var address = DefaultInputWatcher.address
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+            self.listener = nil
+        }
+
+        private static var address: AudioObjectPropertyAddress {
+            AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
         }
     }
 }

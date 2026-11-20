@@ -9,7 +9,8 @@ final class FakeAudioInput: AudioCapture.Input, @unchecked Sendable {
     private(set) var starts = 0
     private(set) var stops = 0
     private var buffers: (@Sendable (AVAudioPCMBuffer) -> Void)?
-    private var changed: (@MainActor @Sendable () -> Void)?
+    /// Each successful start's `changed`, in order.
+    private var changes: [@MainActor @Sendable () -> Void] = []
 
     func start(
         buffers: @escaping @Sendable (AVAudioPCMBuffer) -> Void,
@@ -22,7 +23,7 @@ final class FakeAudioInput: AudioCapture.Input, @unchecked Sendable {
         }
 
         self.buffers = buffers
-        self.changed = changed
+        changes.append(changed)
     }
 
     /// Keeps the callbacks, like a tap whose last buffer is still on its way.
@@ -34,11 +35,17 @@ final class FakeAudioInput: AudioCapture.Input, @unchecked Sendable {
         buffers?(buffer)
     }
 
-    /// The device changed: AVAudioEngine stopped and says so.
+    /// The device changed: the latest start hears it, or the one given (a notice that comes after a restart).
     @MainActor
-    func changeDevice() {
-        changed?()
+    func changeDevice(start: Int? = nil) {
+        guard !changes.isEmpty else { return }
+        changes[start ?? changes.count - 1]()
     }
+}
+
+/// Lives as long as something holds it.
+private final class Sentinel: Sendable {
+    func touch() {}
 }
 
 /// The chunks a capture sends, from whatever thread.
@@ -290,5 +297,44 @@ final class AudioCaptureTests: XCTestCase {
             XCTAssertEqual(.noMicrophone, error as? AudioCapture.Failure)
         }
         XCTAssertFalse(capture.isRunning)
+    }
+
+    /// A new default input with a new rate: Core Audio and the engine both say so, and the later notice reaches the
+    /// capture after it has already started again.
+    @MainActor
+    func testTwoNoticesOfOneDeviceChangeRestartOnce() throws {
+        let input = FakeAudioInput()
+        let capture = AudioCapture(input: input)
+        try capture.start()
+
+        input.changeDevice()
+        input.changeDevice(start: 0)
+
+        XCTAssertTrue(capture.isRunning)
+        XCTAssertEqual(2, input.starts)
+        XCTAssertEqual(1, input.stops)
+    }
+
+    /// Core Audio holds a listener until the very same block is taken off it; a block that isn't would keep firing.
+    @MainActor
+    func testTheDefaultInputListenerComesOffCoreAudioWhenStopped() throws {
+        let watcher = AudioCapture.DefaultInputWatcher()
+        weak var held: Sentinel?
+        do {
+            let sentinel = Sentinel()
+            held = sentinel
+            guard watcher.start({ sentinel.touch() }) else {
+                throw XCTSkip("Core Audio took no listener on this machine")
+            }
+        }
+
+        XCTAssertNotNil(held)
+        watcher.stop()
+        let deadline = Date().addingTimeInterval(2)
+        while held != nil && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+
+        XCTAssertNil(held, "Core Audio still holds the default-input listener")
     }
 }

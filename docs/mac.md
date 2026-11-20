@@ -165,8 +165,8 @@ This page is the Mac side: how each feature is built here, and in what order.
 - **GitHub's macOS runners:** the core's unit tests and the shared vectors, the speech engines on the recordings in
   `tests/audio`, and the app build, on every change.
 - **A real Mac** for what CI can't do: the microphone, the permissions, Fn, and typing into Notes, Mail, Safari,
-  Chrome, Slack, VS Code and Terminal, password fields, and switching apps mid-dictation. A checklist comes with the
-  first test build.
+  Chrome, Slack, VS Code and Terminal, password fields, and switching apps mid-dictation. How to install a test build,
+  and the checklist, are in [mac-testing.md](mac-testing.md).
 
 ## Phases
 

@@ -84,14 +84,14 @@ public final class UserNotificationSurface: NSObject, NotificationSurface, UNUse
     /// Shown even while ThumbFree is the active app.
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list])
     }
 
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+        withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let action = response.actionIdentifier
         if action == UNNotificationDefaultActionIdentifier || action == Self.copyAction {

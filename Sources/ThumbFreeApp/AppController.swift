@@ -42,6 +42,10 @@ public final class AppController: NSObject, NSApplicationDelegate {
     private var recordingId = 0
     private var paused = false
 
+    /// The tap the permissions allowed when the dictation key's tap was last made: it's made again only when they
+    /// change, not every few seconds while macOS refuses it.
+    private var tapAllowed: HotkeyTap.Mode?
+
     init(paths: AppPaths) {
         self.paths = paths
         instance = SingleInstance(path: paths.instanceLock)
@@ -244,6 +248,7 @@ public final class AppController: NSObject, NSApplicationDelegate {
         }
 
         self.keys = keys
+        tapAllowed = allowedTap()
         let mode = keys.start()
         Log.info("dictation keys: \(mode)")
         if mode == .off {
@@ -403,16 +408,25 @@ public final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A permission given in System Settings since: the dictation key's tap is made again for it.
+    /// A permission given (or taken back) in System Settings since: the dictation key's tap is made again for it.
     private func permissionsMayHaveChanged() {
         guard let keys, !recording else { return }
-        let wanted: HotkeyTap.Mode = permissions.status(.postEvents) == .granted
-            ? .active : permissions.status(.inputMonitoring) == .granted ? .listenOnly : .off
-        if wanted != keys.mode {
+        let allowed = allowedTap()
+        if allowed != tapAllowed {
+            tapAllowed = allowed
             Log.info("dictation keys: \(keys.start())")
         }
 
         menuBar?.refresh()
+    }
+
+    /// The tap the permissions allow: active with the right to post events, else listen-only with Input Monitoring.
+    private func allowedTap() -> HotkeyTap.Mode {
+        if permissions.status(.postEvents) == .granted {
+            return .active
+        }
+
+        return permissions.status(.inputMonitoring) == .granted ? .listenOnly : .off
     }
 
     /// First launch: the speech model is offered from the menu bar (a small one also downloads at the first tap).

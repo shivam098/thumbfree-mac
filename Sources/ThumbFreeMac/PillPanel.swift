@@ -229,16 +229,29 @@ extension Pill {
                     }
                 }
                 .frame(height: 18)
+            } else if let dot = display.dot, display.dotPulses {
+                PulsingDot(colour: dot)
             } else if let dot = display.dot {
-                Circle()
-                    .fill(Color(pill: dot))
-                    .frame(width: 10, height: 10)
-                    .opacity(display.dotPulses ? 0.3 : 1)
-                    .animation(
-                        display.dotPulses
-                            ? .easeInOut(duration: Model.pulseTime).repeatForever(autoreverses: true) : .default,
-                        value: display.dotPulses)
+                Circle().fill(Color(pill: dot)).frame(width: 10, height: 10)
             }
+        }
+    }
+
+    /// The dot while transcribing: fades to 30% and back, `Model.pulseTime` each way, from when it appears.
+    struct PulsingDot: View {
+        let colour: Colour
+        @State private var faded = false
+
+        var body: some View {
+            Circle()
+                .fill(Color(pill: colour))
+                .frame(width: 10, height: 10)
+                .opacity(faded ? 0.3 : 1)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: Model.pulseTime).repeatForever(autoreverses: true)) {
+                        faded = true
+                    }
+                }
         }
     }
 

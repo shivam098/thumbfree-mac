@@ -3,7 +3,7 @@ import XCTest
 @testable import ThumbFreeMac
 
 /// Reading the focused box through a fake Accessibility API: what kind of box it is, the text before the cursor (in
-/// UTF-16 units, as apps count it), the same-box check, and waking Chromium and Electron apps.
+/// UTF-16 units, as apps count it, fetched on its own), the same-box check, and waking Chromium and Electron apps.
 final class FocusedFieldTests: XCTestCase {
     private let notes: pid_t = 11
     private let chrome: pid_t = 12
@@ -26,6 +26,7 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertEqual(true, field.takesLineBreaks)
         XCTAssertEqual("Milk\nEggs", field.textBefore)
         XCTAssertTrue(field.caretKnown)
+        XCTAssertTrue(field.isResolved)
         XCTAssertFalse(field.isSecure)
         XCTAssertFalse(field.isSearch)
         XCTAssertFalse(field.isInWebPage)
@@ -35,6 +36,9 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertEqual("Shopping", field.windowTitle)
         XCTAssertEqual(CGRect(x: 100, y: 50, width: 800, height: 600), field.windowFrame)
         XCTAssertEqual("AXTextArea multi-line", field.kind)
+        // Only the text before the cursor was fetched, not the box's whole text.
+        XCTAssertTrue(box.asked.contains("\(kAXStringForRangeParameterizedAttribute) 0+9"), "\(box.asked)")
+        XCTAssertFalse(box.asked.contains(kAXValueAttribute))
     }
 
     func testTextFieldsComboBoxesAndSearchBoxesTakeNoLineBreaks() throws {
@@ -87,8 +91,7 @@ final class FocusedFieldTests: XCTestCase {
             XCTAssertEqual(false, field.takesLineBreaks, role)
             XCTAssertNil(field.textBefore, role)
             XCTAssertFalse(field.caretKnown, role)
-            XCTAssertFalse(box.asked.contains(kAXValueAttribute), role)
-            XCTAssertFalse(box.asked.contains("AXPlaceholderValue"), role)
+            XCTAssertEqual([kAXRoleAttribute, kAXSubroleAttribute], box.asked, role)
         }
     }
 
@@ -104,52 +107,71 @@ final class FocusedFieldTests: XCTestCase {
     }
 
     func testTheTextBeforeTheCursorIsCountedInUTF16UnitsAsAppsCountIt() throws {
-        for (value, location, before) in [
-            ("Hi 👋 there", 5, "Hi 👋"),
-            // A cursor inside an emoji's two units stops before it.
-            ("Hi 👋 there", 4, "Hi "),
-            ("Go 🇮🇳 now", 7, "Go 🇮🇳"),
-            ("Café ☕️ ok", 7, "Café ☕️"),
-            ("We 👨‍👩‍👧 went", 11, "We 👨‍👩‍👧"),
-            ("short", 99, "short"),
-            ("start", 0, ""),
+        for ranges in [true, false] {
+            for (value, location, before) in [
+                ("Hi 👋 there", 5, "Hi 👋"),
+                // A cursor inside an emoji's two units stops before it.
+                ("Hi 👋 there", 4, "Hi "),
+                ("Go 🇮🇳 now", 7, "Go 🇮🇳"),
+                ("Café ☕️ ok", 7, "Café ☕️"),
+                ("We 👨‍👩‍👧 went", 11, "We 👨‍👩‍👧"),
+                ("short", 99, "short"),
+                ("start", 0, ""),
+            ] {
+                let system = FakeAXSystem()
+                let box = FakeAXField("AXTextArea", in: system.window("Chat", in: notes), [kAXValueAttribute: value])
+                box.selection = CFRange(location: location, length: 2)
+                box.ranges = ranges
+                system.focus = box
+
+                let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
+
+                XCTAssertEqual(before, field.textBefore, "\(value) at \(location), ranges \(ranges)")
+                XCTAssertTrue(field.caretKnown)
+            }
+        }
+    }
+
+    func testOnlyTheLast2000UnitsBeforeTheCursorAreFetched() throws {
+        let a = String(repeating: "a", count: 500)
+        let b = String(repeating: "b", count: 2000)
+        let c = String(repeating: "c", count: 500)
+        for (value, cursor, range, before) in [
+            (a + b + c, 2500, "499+2001", b),
+            // An emoji cut in two at the start of what's fetched goes: 2000 units are left.
+            ("x" + "👋" + b, 2003, "2+2001", b),
+            // An emoji whole at the start goes too, as the 2000 units start inside it.
+            ("x" + "👋" + String(b.dropFirst()), 2002, "1+2001", String(b.dropFirst())),
         ] {
             let system = FakeAXSystem()
-            let box = FakeAXField("AXTextArea", in: system.window("Chat", in: notes), [kAXValueAttribute: value])
-            box.selection = CFRange(location: location, length: 2)
+            let box = FakeAXField("AXTextArea", in: system.window("Essay", in: notes), [kAXValueAttribute: value])
+            box.selection = CFRange(location: cursor, length: 0)
             system.focus = box
 
             let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
 
-            XCTAssertEqual(before, field.textBefore, "\(value) at \(location)")
-            XCTAssertTrue(field.caretKnown)
+            XCTAssertEqual(before, field.textBefore, range)
+            XCTAssertTrue(box.asked.contains("\(kAXStringForRangeParameterizedAttribute) \(range)"), "\(box.asked)")
+            XCTAssertFalse(box.asked.contains(kAXValueAttribute))
         }
     }
 
-    func testOnlyTheLast2000UnitsBeforeTheCursorAreKept() throws {
-        let system = FakeAXSystem()
-        let many = String(repeating: "a", count: 1999)
-        let window = system.window("Essay", in: notes)
-        let box = FakeAXField("AXTextArea", in: window, [kAXValueAttribute: "👋" + many + " end"])
-        box.selection = CFRange(location: 2001, length: 0)
-        system.focus = box
+    func testWithoutACursorOnlyTheEndOfTheTextIsFetched() throws {
+        for ranges in [true, false] {
+            let system = FakeAXSystem()
+            let box = FakeAXField(
+                "AXTextArea", in: system.window("Note", in: notes),
+                [kAXValueAttribute: String(repeating: "b", count: 2500)])
+            box.ranges = ranges
+            system.focus = box
 
-        let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
+            let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
 
-        // The cut falls inside the emoji, so all of it goes: 1999 units are kept.
-        XCTAssertEqual(many, field.textBefore)
-    }
-
-    func testWithoutACursorTheWholeValueCounts() throws {
-        let system = FakeAXSystem()
-        system.focus = FakeAXField(
-            "AXTextArea", in: system.window("Note", in: notes),
-            [kAXValueAttribute: String(repeating: "b", count: 2500)])
-
-        let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
-
-        XCTAssertEqual(String(repeating: "b", count: 2000), field.textBefore)
-        XCTAssertFalse(field.caretKnown)
+            XCTAssertEqual(String(repeating: "b", count: 2000), field.textBefore)
+            XCTAssertFalse(field.caretKnown)
+            // The whole text is read only from a box that can't give a range.
+            XCTAssertEqual(!ranges, box.asked.contains(kAXValueAttribute), "ranges \(ranges)")
+        }
     }
 
     func testOtherRolesDontSayWhetherTheyTakeLineBreaks() throws {
@@ -176,6 +198,21 @@ final class FocusedFieldTests: XCTestCase {
         let own = system.window("Settings", in: ProcessInfo.processInfo.processIdentifier)
         system.focus = FakeAXField("AXTextField", in: own)
         XCTAssertNil(FocusedField.Reader(source: system).read())
+    }
+
+    func testTheFocusComesFromTheAppInFrontWhenTheSystemWideElementHasNone() throws {
+        let system = FakeAXSystem()
+        let box = FakeAXField("AXTextField", in: system.window("Search", in: notes))
+        system.focus = box
+        system.systemWideFocus = false
+        (system.application(notes) as? FakeAXField)?.focused = box
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+
+        let field = try XCTUnwrap(reader.read())
+
+        XCTAssertEqual("AXTextField", field.role)
+        XCTAssertEqual(true, reader.isSameField(field))
     }
 
     func testAnAppThatStopsAnsweringIsAskedNothingMore() throws {
@@ -210,90 +247,164 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertEqual(false, reader.isSameField(field), "another app")
 
         system.focus = nil
+        system.front = notes
         XCTAssertEqual(false, reader.isSameField(field), "nothing has the focus")
-
-        system.focus = box
-        system.answering = false
-        XCTAssertNil(reader.isSameField(field), "no answer")
     }
 
-    func testChromiumBrowsersAreWokenOnceAndTheirBoxIsWaitedFor() throws {
+    func testAnotherAppInFrontIsAnotherBoxEvenWithoutAnAnswer() throws {
         let system = FakeAXSystem()
-        system.apps[chrome] = FocusedField.App(
-            processIdentifier: chrome, bundleIdentifier: "com.google.Chrome.canary", name: "Chrome")
-        let app = system.application(chrome) as! FakeAXField
-        let page = FakeAXField("AXWebArea", in: system.window("Inbox - Gmail", in: chrome))
-        let box = FakeAXField("AXTextArea", in: FakeAXField("AXGroup", in: page))
-        system.focus = page
-        // The page describes its box once Chrome has been asked to.
-        system.onFocusQuery = { [unowned system] in
-            if app.flags["AXEnhancedUserInterface"] == true { system.focus = box }
-        }
-        let clock = FakeReaderClock()
-        let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
-
+        system.focus = FakeAXField("AXTextArea", in: system.window("Notes", in: notes))
+        let reader = FocusedField.Reader(source: system)
         let field = try XCTUnwrap(reader.read())
+        system.answering = false
 
-        XCTAssertEqual("AXTextArea", field.role)
-        XCTAssertTrue(field.isInWebPage)
-        XCTAssertEqual("Inbox - Gmail", field.windowTitle)
+        XCTAssertNil(reader.isSameField(field), "Notes in front, but its focus can't be told")
+
+        system.front = slack
+        XCTAssertEqual(false, reader.isSameField(field), "Slack in front")
+    }
+
+    func testChromiumIsWokenWhenItComesToTheFrontAndItsBoxReadOnceDescribed() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome.canary")
+        let app = try XCTUnwrap(system.application(chrome) as? FakeAXField)
+        let page = FakeAXField("AXWebArea", in: system.window("Inbox - Gmail", in: chrome))
+        let box = FakeAXField("AXTextArea", in: FakeAXField("AXGroup", in: page), [kAXValueAttribute: "Hi Sam"])
+        box.selection = CFRange(location: 6, length: 0)
+        system.focus = page
+        // Chromium describes its pages 2 s after it's woken.
+        let clock = FakeReaderClock()
+        var wokenAt: TimeInterval?
+        system.onSetFlag = { _ in wokenAt = clock.time }
+        system.onFocusQuery = { [unowned system] in
+            if let wokenAt, clock.time >= wokenAt + 2 { system.focus = box }
+        }
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
+
+        system.activate(chrome)
         XCTAssertEqual(["AXEnhancedUserInterface": true], app.flags)
-        XCTAssertEqual(0.05, clock.time, accuracy: 0.001)
+
+        // A dictation starting half a second later doesn't wait for the page.
+        clock.time = 0.5
+        let field = try XCTUnwrap(reader.read())
+        XCTAssertFalse(field.isResolved)
+        XCTAssertEqual("AXWebArea web unresolved", field.kind)
+        XCTAssertNil(field.textBefore)
+        XCTAssertNil(field.takesLineBreaks)
+        XCTAssertNil(reader.resolved(field), "not described yet")
         XCTAssertEqual(true, reader.isSameField(field))
 
-        // Once a Chrome is woken, it isn't asked again.
-        app.flags = [:]
-        system.focus = page
-        let again = try XCTUnwrap(reader.read())
-        XCTAssertEqual("AXWebArea", again.role)
+        // By the first piece of typing, it is.
+        clock.time = 2.2
+        let described = try XCTUnwrap(reader.resolved(field))
+        XCTAssertTrue(described.isResolved)
+        XCTAssertEqual("AXTextArea", described.role)
+        XCTAssertEqual(true, described.takesLineBreaks)
+        XCTAssertEqual("Hi Sam", described.textBefore)
+        XCTAssertEqual(true, reader.isSameField(described))
+        XCTAssertEqual(true, reader.isSameField(field), "the same page")
+        XCTAssertEqual(1, system.flagsAsked, "woken once")
+    }
+
+    func testAWakeCountsOnlyOnceTheAppHasTakenIt() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.brave.Browser")
+        let app = try XCTUnwrap(system.application(chrome) as? FakeAXField)
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
+
+        // Still starting, it refuses the flag, so it's asked again the next time it comes to the front.
+        system.takesFlags = false
+        system.activate(chrome)
         XCTAssertEqual([:], app.flags)
+
+        system.takesFlags = true
+        system.activate(chrome)
+        XCTAssertEqual(["AXEnhancedUserInterface": true], app.flags)
+
+        system.activate(chrome)
+        XCTAssertEqual(2, system.flagsAsked)
+    }
+
+    func testTheAppInFrontIsWokenAtStart() {
+        let system = FakeAXSystem()
+        system.apps[slack] = FocusedField.App(
+            processIdentifier: slack, bundleIdentifier: "com.tinyspeck.slackmacgap", isElectron: true)
+        system.front = slack
+        let woken = expectation(description: "Slack woken")
+        system.onSetFlag = { attribute in
+            XCTAssertEqual("AXManualAccessibility", attribute)
+            woken.fulfill()
+        }
+
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
+
+        wait(for: [woken], timeout: 5)
+    }
+
+    func testAReadWakesAnAppThatWasntWokenYet() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
+        let app = try XCTUnwrap(system.application(chrome) as? FakeAXField)
+        system.focus = FakeAXField("AXWebArea", in: system.window("New Tab", in: chrome))
+        let reader = FocusedField.Reader(source: system)
+
+        let field = try XCTUnwrap(reader.read())
+        _ = reader.read()
+
+        XCTAssertFalse(field.isResolved)
+        XCTAssertEqual(["AXEnhancedUserInterface": true], app.flags)
+        XCTAssertEqual(1, system.flagsAsked)
     }
 
     func testElectronAppsAreWokenWithManualAccessibility() throws {
         let system = FakeAXSystem()
         system.apps[slack] = FocusedField.App(
             processIdentifier: slack, bundleIdentifier: "com.tinyspeck.slackmacgap", isElectron: true)
-        let app = system.application(slack) as! FakeAXField
+        let app = try XCTUnwrap(system.application(slack) as? FakeAXField)
         system.focus = FakeAXField("AXTextArea", in: FakeAXField("AXWebArea", in: system.window("general", in: slack)))
-        let clock = FakeReaderClock()
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
 
-        let field = try XCTUnwrap(FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now).read())
+        system.activate(slack)
+        let field = try XCTUnwrap(reader.read())
 
         XCTAssertEqual(["AXManualAccessibility": true], app.flags)
-        XCTAssertEqual("AXTextArea", field.role)
-        // The box had the focus already: nothing was waited for.
-        XCTAssertEqual(0, clock.time)
+        XCTAssertTrue(field.isResolved)
+        XCTAssertEqual(1, system.flagsAsked)
     }
 
     func testTheWakeCanBeTurnedOff() throws {
         let system = FakeAXSystem()
         system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
-        let app = system.application(chrome) as! FakeAXField
         system.focus = FakeAXField("AXWebArea", in: system.window("New Tab", in: chrome))
-        let clock = FakeReaderClock()
-        let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
         reader.wakesWebContent = false
+        reader.startWaking()
 
+        system.activate(chrome)
         let field = try XCTUnwrap(reader.read())
 
-        XCTAssertEqual([:], app.flags)
+        XCTAssertEqual(0, system.flagsAsked)
         XCTAssertEqual("AXWebArea", field.role)
-        XCTAssertEqual(0, clock.time)
     }
 
-    func testAPageWhoseBoxWasntFoundIsRecognisedByThePage() throws {
+    func testAPageNotDescribedYetIsRecognisedByThePage() throws {
         let system = FakeAXSystem()
         system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.microsoft.edgemac")
         let window = system.window("Docs", in: chrome)
         let page = FakeAXField("AXWebArea", in: window)
         system.focus = page
-        let clock = FakeReaderClock()
-        let reader = FocusedField.Reader(source: system, sleep: clock.sleep, now: clock.now)
+        let reader = FocusedField.Reader(source: system)
 
         let field = try XCTUnwrap(reader.read())
 
-        // Waited 1.2 s for a box that never came.
-        XCTAssertEqual(1.2, clock.time, accuracy: 0.06)
         XCTAssertEqual("AXWebArea web unresolved", field.kind)
         XCTAssertNil(field.takesLineBreaks)
 
@@ -303,9 +414,53 @@ final class FocusedFieldTests: XCTestCase {
         let toolbar = FakeAXField("AXToolbar", in: window)
         system.focus = FakeAXField("AXTextField", in: toolbar, [kAXDescriptionAttribute: "Address and search bar"])
         XCTAssertEqual(false, reader.isSameField(field), "the address bar")
+        XCTAssertNil(reader.resolved(field), "the address bar isn't the page's box")
 
         system.focus = FakeAXField("AXTextArea", in: FakeAXField("AXWebArea", in: window))
         XCTAssertEqual(false, reader.isSameField(field), "another tab")
+    }
+
+    func testAPaneInNoWindowIsRecognisedOnlyByItself() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
+        let app = system.application(chrome) as? FakeAXField
+        system.focus = FakeAXField("AXGroup", in: app)
+        let reader = FocusedField.Reader(source: system)
+
+        let field = try XCTUnwrap(reader.read())
+
+        XCTAssertFalse(field.isResolved)
+        XCTAssertEqual(true, reader.isSameField(field))
+        system.focus = FakeAXField("AXGroup", in: app)
+        XCTAssertEqual(false, reader.isSameField(field), "another element of the same app")
+    }
+
+    func testAnUndescribedPageWhoseWindowCantBeFoundIsntRead() {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
+        system.focus = FakeAXField("AXGroup", in: system.window("Docs", in: chrome))
+        // The focus, the process, the role and the subrole are answered, the parents aren't.
+        system.answersLeft = 4
+
+        XCTAssertNil(FocusedField.Reader(source: system).read())
+    }
+
+    func testADescribedBoxInAnotherWindowIsntTheOneStarted() throws {
+        let system = FakeAXSystem()
+        system.apps[slack] = FocusedField.App(processIdentifier: slack, isElectron: true)
+        let window = system.window("general", in: slack)
+        system.focus = FakeAXField("AXGroup", in: window)
+        let reader = FocusedField.Reader(source: system)
+        reader.wakesWebContent = false
+        let field = try XCTUnwrap(reader.read())
+        XCTAssertFalse(field.isResolved)
+
+        system.focus = FakeAXField("AXTextArea", in: FakeAXField("AXWebArea", in: system.window("random", in: slack)))
+        XCTAssertNil(reader.resolved(field))
+        XCTAssertEqual(false, reader.isSameField(field))
+
+        system.focus = FakeAXField("AXTextArea", in: FakeAXField("AXWebArea", in: window))
+        XCTAssertEqual("AXTextArea", try XCTUnwrap(reader.resolved(field)).role)
     }
 }
 
@@ -318,6 +473,10 @@ private final class FakeAXField {
     var strings: [String: String]
     var selection: CFRange?
     var frame: CGRect?
+    /// Gives kAXStringForRangeParameterizedAttribute and kAXNumberOfCharactersAttribute, as most boxes do.
+    var ranges = true
+    /// An app's focused element (kAXFocusedUIElementAttribute of the app).
+    var focused: FakeAXField?
     var flags: [String: Bool] = [:]
     var asked: [String] = []
 
@@ -341,24 +500,46 @@ private final class FakeAXField {
 /// Accessibility over fake elements. `answering` false, or `answersLeft` used up, makes every call go unanswered.
 private final class FakeAXSystem: FocusedField.Accessibility {
     var focus: FakeAXField?
+    /// The system-wide element says which element has the focus (some apps say so only through themselves).
+    var systemWideFocus = true
     var answering = true
     var answersLeft = Int.max
     var unanswered = 0
     var apps: [pid_t: FocusedField.App] = [:]
     var secureEventInput = false
-    /// Runs at each focus query, before it's answered: the focus moving while the reader waits.
+    /// The app in front; by default the focused element's.
+    var front: pid_t?
+    /// Whether apps take the flags set on them.
+    var takesFlags = true
+    private(set) var flagsAsked = 0
+    var onSetFlag: ((String) -> Void)?
+    /// Runs at each focus query, before it's answered: the focus moving while time passes.
     var onFocusQuery: (() -> Void)?
     private var applications: [pid_t: FakeAXField] = [:]
+    private var activated: (@Sendable (pid_t) -> Void)?
 
     /// A window titled `title`, in the app `pid`.
     func window(_ title: String, in pid: pid_t) -> FakeAXField {
         FakeAXField("AXWindow", in: application(pid) as? FakeAXField, [kAXTitleAttribute: title])
     }
 
+    /// The app `pid` comes to the front.
+    func activate(_ pid: pid_t) {
+        front = pid
+        activated?(pid)
+    }
+
+    var frontmostProcess: pid_t? { front ?? focus?.pid }
+
+    func observeActivations(_ handler: @escaping @Sendable (pid_t) -> Void) -> AnyObject {
+        activated = handler
+        return NSObject()
+    }
+
     func focusedElement() throws -> AnyObject? {
         onFocusQuery?()
         try answer()
-        return focus
+        return systemWideFocus ? focus : nil
     }
 
     func string(_ attribute: String, of element: AnyObject) throws -> String? {
@@ -372,6 +553,14 @@ private final class FakeAXSystem: FocusedField.Accessibility {
         }
     }
 
+    func integer(_ attribute: String, of element: AnyObject) throws -> Int? {
+        try answer()
+        let field = element as! FakeAXField
+        field.asked.append(attribute)
+        guard field.ranges, attribute == kAXNumberOfCharactersAttribute else { return nil }
+        return field.strings[kAXValueAttribute]?.utf16.count
+    }
+
     func range(_ attribute: String, of element: AnyObject) throws -> CFRange? {
         try answer()
         let field = element as! FakeAXField
@@ -379,9 +568,26 @@ private final class FakeAXSystem: FocusedField.Accessibility {
         return attribute == kAXSelectedTextRangeAttribute ? field.selection : nil
     }
 
+    /// The units in `range` as an app gives them, cutting an emoji in two if the range does.
+    func utf16(_ attribute: String, for range: CFRange, of element: AnyObject) throws -> [UInt16]? {
+        try answer()
+        let field = element as! FakeAXField
+        field.asked.append("\(attribute) \(range.location)+\(range.length)")
+        guard field.ranges, attribute == kAXStringForRangeParameterizedAttribute,
+              let value = field.strings[kAXValueAttribute] else { return nil }
+        let units = Array(value.utf16)
+        let start = min(max(range.location, 0), units.count)
+        return Array(units[start..<min(start + max(range.length, 0), units.count)])
+    }
+
     func element(_ attribute: String, of element: AnyObject) throws -> AnyObject? {
         try answer()
-        return attribute == kAXParentAttribute ? (element as! FakeAXField).parent : nil
+        let field = element as! FakeAXField
+        switch attribute {
+        case kAXParentAttribute: return field.parent
+        case kAXFocusedUIElementAttribute: return field.focused
+        default: return nil
+        }
     }
 
     func frame(of element: AnyObject) throws -> CGRect? {
@@ -405,6 +611,9 @@ private final class FakeAXSystem: FocusedField.Accessibility {
     }
 
     func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> Bool {
+        flagsAsked += 1
+        onSetFlag?(attribute)
+        guard takesFlags else { return false }
         (element as! FakeAXField).flags[attribute] = value
         return true
     }
@@ -426,15 +635,7 @@ private final class FakeAXSystem: FocusedField.Accessibility {
     }
 }
 
-/// Time that passes only when the reader sleeps.
+/// Time that passes only when a test says so.
 private final class FakeReaderClock {
-    private(set) var time: TimeInterval = 0
-
-    func sleep(_ interval: TimeInterval) {
-        time += interval
-    }
-
-    func now() -> TimeInterval {
-        time
-    }
+    var time: TimeInterval = 0
 }

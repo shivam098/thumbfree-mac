@@ -33,7 +33,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
+      # The whole history, so the script finds the latest v* tag for the version.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Tools
         run: |

@@ -20,9 +20,23 @@ extension PasteTyper {
 
         public var changeCount: Int { pasteboard.changeCount }
 
+        /// NSPasteboard.accessBehavior from macOS 15.4; a behaviour macOS adds later counts as asking each time.
+        public var access: PasteboardAccess {
+            guard #available(macOS 15.4, *) else { return .unrestricted }
+            switch pasteboard.accessBehavior {
+            case .default: return .default
+            case .ask: return .ask
+            case .alwaysAllow: return .alwaysAllow
+            case .alwaysDeny: return .alwaysDeny
+            @unknown default: return .ask
+            }
+        }
+
         /// Every item, each with every type whose data can be read; a type that can't (a promise its app no longer
-        /// keeps) is skipped, as on Windows.
-        public func save() -> Contents? {
+        /// keeps) is skipped, as on Windows. When nothing at all can be read, the pasteboard is unreadable, never
+        /// empty: it isn't emptied afterwards.
+        public func save() -> Saved {
+            guard let types = pasteboard.types, !types.isEmpty else { return .empty }
             var items: [[Contents.Representation]] = []
             for item in pasteboard.pasteboardItems ?? [] {
                 let representations = item.types.compactMap { type in
@@ -34,7 +48,7 @@ extension PasteTyper {
                 }
             }
 
-            return items.isEmpty ? nil : Contents(items: items)
+            return items.isEmpty ? .unreadable : .items(Contents(items: items))
         }
 
         /// The text and the markers, for this Mac only: Universal Clipboard doesn't offer it to your other devices (as
@@ -51,54 +65,56 @@ extension PasteTyper {
             return pasteboard.changeCount
         }
 
-        public func restore(_ contents: Contents?) {
-            _ = pasteboard.prepareForNewContents(with: contents?.isConcealed == true ? .currentHostOnly : [])
-            guard let contents else { return }
-            let items = contents.items.map { representations in
-                let item = NSPasteboardItem()
-                for representation in representations {
-                    _ = item.setData(representation.data, forType: NSPasteboard.PasteboardType(representation.type))
+        public func restore(_ saved: Saved) {
+            switch saved {
+            case .unreadable:
+                return
+            case .empty:
+                _ = pasteboard.prepareForNewContents(with: [])
+            case .items(let contents):
+                _ = pasteboard.prepareForNewContents(with: contents.isConcealed ? .currentHostOnly : [])
+                let items = contents.items.map { representations in
+                    let item = NSPasteboardItem()
+                    for representation in representations {
+                        let type = NSPasteboard.PasteboardType(representation.type)
+                        _ = item.setData(representation.data, forType: type)
+                    }
+
+                    return item
                 }
 
-                return item
+                _ = pasteboard.writeObjects(items)
             }
-
-            _ = pasteboard.writeObjects(items)
         }
     }
 
-    /// The keyboard: the modifier keys held now, and keys sent with CGEvent, which needs the Accessibility permission.
-    /// ⌘V is the key that types "v" with ⌘ in the keyboard layout in use (Dvorak's is QWERTY's "."), as Windows' Ctrl+V
-    /// is the V key of the layout in use.
-    public final class SystemKeys: Keys, @unchecked Sendable {
+    /// The keyboard: the modifier keys held now, and keys sent with CGEvent, which needs the permission to control the
+    /// computer. ⌘V is the key that types "v" with ⌘ in the keyboard layout in use (Dvorak's is QWERTY's "."), as
+    /// Windows' Ctrl+V is the V key of the layout in use. Keys sent from ThumbFree carry its process identifier, so
+    /// its own dictation key ignores them.
+    public final class SystemKeys: NSObject, Keys, @unchecked Sendable {
         private let lock = NSLock()
         private var pasteKey = CGKeyCode(kVK_ANSI_V)
-        private var observer: NSObjectProtocol?
 
         /// Text Input Sources answers on the main thread only, so the paste key is found there, now or as soon as the
         /// main thread is free, and again whenever the keyboard layout changes.
-        public init() {
+        public override init() {
+            super.init()
             if Thread.isMainThread {
-                updatePasteKey()
+                watchLayout()
             } else {
-                DispatchQueue.main.async { [weak self] in self?.updatePasteKey() }
-            }
-
-            let changed = Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String)
-            let center = DistributedNotificationCenter.default()
-            observer = center.addObserver(forName: changed, object: nil, queue: .main) { [weak self] _ in
-                self?.updatePasteKey()
+                DispatchQueue.main.async { [weak self] in self?.watchLayout() }
             }
         }
 
         deinit {
-            if let observer {
-                DistributedNotificationCenter.default().removeObserver(observer)
-            }
+            DistributedNotificationCenter.default().removeObserver(self)
         }
 
+        /// The keys held on the keyboard itself (the HID state): ThumbFree's own ⌘V doesn't count, so the next line
+        /// doesn't wait for it.
         public var heldModifiers: Modifiers {
-            let flags = CGEventSource.flagsState(.combinedSessionState)
+            let flags = CGEventSource.flagsState(.hidSystemState)
             var held: Modifiers = []
             if flags.contains(.maskCommand) { held.insert(.command) }
             if flags.contains(.maskAlternate) { held.insert(.option) }
@@ -108,28 +124,24 @@ extension PasteTyper {
             return held
         }
 
-        public var secureInput: Bool { IsSecureEventInputEnabled() }
+        public var secureInput: Bool { FocusedField.SecureInput.isOn() }
 
         public var pasteChord: Chord {
             Chord(key: lock.withLock { pasteKey }, modifiers: .command)
         }
 
         /// Key down and up, with the chord's modifier flags only: nothing else held reaches the app (the typer waits
-        /// for held keys to be let go first). Without the Accessibility permission macOS would drop them silently, so
-        /// nothing goes out and `Failure.notAllowed` is thrown.
+        /// for held keys to be let go first). Without the permission to control the computer macOS would drop them
+        /// silently, so nothing goes out and `Failure.notAllowed` is thrown.
         public func post(_ chord: Chord) throws {
-            guard AXIsProcessTrusted() else { throw Failure.notAllowed }
-            let source = CGEventSource(stateID: .combinedSessionState)
-            guard let down = CGEvent(keyboardEventSource: source, virtualKey: chord.key, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: chord.key, keyDown: false) else {
-                throw Failure.keysUnavailable
-            }
+            try send(chord.key, flags: Self.eventFlags(chord.modifiers))
+        }
 
-            let flags = Self.eventFlags(chord.modifiers)
-            down.flags = flags
-            up.flags = flags
-            down.post(tap: .cgSessionEventTap)
-            up.post(tap: .cgSessionEventTap)
+        /// A key with `characters` as what it types (CGEventKeyboardSetUnicodeString) and no modifiers, so the
+        /// keyboard layout doesn't matter. The key is the ANSI A key, as such typing usually is: apps take the
+        /// characters.
+        public func type(_ characters: String) throws {
+            try send(0, flags: [], characters: Array(characters.utf16))
         }
 
         /// The modifiers' flags, each with the left-hand key's own bit too (NX_DEVICELCMDKEYMASK and so on), as a real
@@ -142,6 +154,45 @@ extension PasteTyper {
             if modifiers.contains(.shift) { flags |= CGEventFlags.maskShift.rawValue | 0x02 }
             if modifiers.contains(.function) { flags |= CGEventFlags.maskSecondaryFn.rawValue }
             return CGEventFlags(rawValue: flags)
+        }
+
+        /// The keys the typer sends: needs PostEvent access (CGPreflightPostEventAccess), which isn't the same as
+        /// being trusted for Accessibility.
+        private func send(_ key: CGKeyCode, flags: CGEventFlags, characters: [UniChar] = []) throws {
+            guard CGPreflightPostEventAccess() else { throw Failure.notAllowed }
+            let source = CGEventSource(stateID: .combinedSessionState)
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else {
+                throw Failure.keysUnavailable
+            }
+
+            if !characters.isEmpty {
+                down.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
+                up.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
+            }
+
+            down.flags = flags
+            up.flags = flags
+            down.post(tap: .cgSessionEventTap)
+            up.post(tap: .cgSessionEventTap)
+        }
+
+        /// Finds the paste key now and whenever the keyboard layout changes. ThumbFree is almost never the active app,
+        /// and the distributed center holds back notifications for inactive apps, so this one is delivered at once.
+        private func watchLayout() {
+            updatePasteKey()
+            DistributedNotificationCenter.default().addObserver(
+                self, selector: #selector(layoutChanged(_:)),
+                name: Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil,
+                suspensionBehavior: .deliverImmediately)
+        }
+
+        @objc private func layoutChanged(_ notification: Notification) {
+            if Thread.isMainThread {
+                updatePasteKey()
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.updatePasteKey() }
+            }
         }
 
         private func updatePasteKey() {

@@ -5,11 +5,20 @@ import Foundation
 /// Types text by pasting it, which every app takes in one go, as thumbfree-windows `ClipboardPaste` does (docs/mac.md,
 /// "Pasting"). The text goes on the pasteboard marked so clipboard managers leave it out and Universal Clipboard keeps
 /// it on this Mac, ⌘V goes out once held modifier keys are let go, and what was on the pasteboard goes back afterwards,
-/// unless something new was copied meanwhile. Sending keys needs the Accessibility permission. Each call blocks (up to
-/// a second for held keys, then `restoreDelay`): use it off the main thread, one call at a time.
+/// unless something new was copied meanwhile. When what's there can't be read to put it back (macOS asks each time or
+/// never allows it, or the app it came from has quit), the text is typed with keys instead, so that copy is never lost
+/// (`whenUnreadable`). Sending keys needs the permission to control the computer. Each call blocks (up to a second for
+/// held keys, then `restoreDelay`): use it off the main thread, one call at a time.
 public final class PasteTyper {
     /// How many times the text goes on the pasteboard when something else was copied before ⌘V.
     static let maxPuts = 2
+
+    /// Typing with keys: the most UTF-16 units a key event carries. Apple documents no limit, but a key event types
+    /// only its first 20.
+    static let unitsPerKey = 20
+
+    /// The pause between those key events, as Windows types (TypingDelayMs): some apps drop fast bursts.
+    static let keyPause: TimeInterval = 0.008
 
     /// How long the app gets to read the pasteboard before it's put back (Windows: RestoreDelayMs).
     public var restoreDelay: TimeInterval = 0.35
@@ -17,6 +26,10 @@ public final class PasteTyper {
     /// How long a paste waits for held modifier keys to be let go, and how often it looks.
     public var modifierTimeout: TimeInterval = 1
     static let modifierPoll: TimeInterval = 0.015
+
+    /// When what's on the pasteboard can't be read to put it back: type the text with keys (the default), or paste it
+    /// all the same, replacing that copy.
+    public var whenUnreadable = Unreadable.typeWithKeys
 
     private let pasteboard: Pasteboard
     private let keys: Keys
@@ -40,17 +53,27 @@ public final class PasteTyper {
     /// last before ⌘V, after the pasteboard holds the text and held modifier keys are let go; if it throws, nothing is
     /// pasted, the pasteboard goes back, and the error is thrown. Something copied before ⌘V (⌘C while the paste
     /// waits for ⌘ to be let go) is kept: it's what goes back afterwards, the text goes on the pasteboard again and is
-    /// checked again, and nothing is pasted if the pasteboard keeps changing (`Failure.pasteboardKeptChanging`).
+    /// checked again, and nothing is pasted if the pasteboard keeps changing (`Failure.pasteboardKeptChanging`). A
+    /// pasteboard that can't be read is left alone and the text typed with keys (`whenUnreadable`).
     public func paste(_ text: String, beforeKeys: () throws -> Void = {}) throws {
         let text = text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
         var put = 1
         while true {
-            let saved = pasteboard.save()
+            let saved = Self.maySave(pasteboard.access) ? pasteboard.save() : .unreadable
+            let replacing = saved == .unreadable
+            if replacing, whenUnreadable == .typeWithKeys {
+                try typeWithKeys(text, beforeKeys: beforeKeys)
+                return
+            }
+
             let ours: Int
             do {
                 ours = try pasteboard.write(text)
             } catch {
-                pasteboard.restore(saved)
+                if !replacing {
+                    pasteboard.restore(saved)
+                }
+
                 throw error
             }
 
@@ -62,13 +85,19 @@ public final class PasteTyper {
                     try keys.post(keys.pasteChord)
                 }
             } catch {
-                putBack(saved, unlessChangedSince: ours)
+                if !replacing {
+                    putBack(saved, unlessChangedSince: ours)
+                }
+
                 throw error
             }
 
             if unchanged {
-                sleep(restoreDelay)
-                putBack(saved, unlessChangedSince: ours)
+                if !replacing {
+                    sleep(restoreDelay)
+                    putBack(saved, unlessChangedSince: ours)
+                }
+
                 return
             }
 
@@ -88,8 +117,8 @@ public final class PasteTyper {
     }
 
     /// Types `text` with its line breaks as `newLine`, the app's new-line keys (⇧↩ in chat apps, where ↩ sends): each
-    /// line is pasted and `newLine` pressed between lines, each after `beforeKeys`, as DictationInserter types on
-    /// Windows.
+    /// line is pasted (or typed with keys) and `newLine` pressed between lines, each after `beforeKeys`, as
+    /// DictationInserter types on Windows.
     public func type(_ text: String, newLine: Chord, beforeKeys: () throws -> Void = {}) throws {
         let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -116,6 +145,68 @@ public final class PasteTyper {
     /// ⌘, ⌥, ⌃, ⇧ or Fn is held now.
     public var modifiersDown: Bool { !keys.heldModifiers.isEmpty }
 
+    /// Whether the pasteboard is read, to put it back afterwards: only when that doesn't ask you each time. Before
+    /// macOS 15.4, with Always Allow, and before macOS has ever asked (it may then ask once), it is; when macOS asks
+    /// each time or always denies, it isn't read at all, and the text is typed with keys.
+    static func maySave(_ access: PasteboardAccess) -> Bool {
+        switch access {
+        case .unrestricted, .default, .alwaysAllow: return true
+        case .ask, .alwaysDeny: return false
+        }
+    }
+
+    /// `text` in pieces of at most `limit` UTF-16 units, each of whole characters; a character longer than that (a
+    /// long run of combining marks) is cut between its Unicode scalars, never inside one.
+    static func pieces(of text: String, unitsEach limit: Int) -> [String] {
+        var pieces: [String] = []
+        var piece = String.UnicodeScalarView()
+        var units = 0
+        for character in text {
+            let length = character.utf16.count
+            if units + length > limit, !piece.isEmpty {
+                pieces.append(String(piece))
+                piece = String.UnicodeScalarView()
+                units = 0
+            }
+
+            if length <= limit {
+                piece.append(contentsOf: character.unicodeScalars)
+                units += length
+                continue
+            }
+
+            for scalar in character.unicodeScalars {
+                if units + UTF16.width(scalar) > limit {
+                    pieces.append(String(piece))
+                    piece = String.UnicodeScalarView()
+                    units = 0
+                }
+
+                piece.append(scalar)
+                units += UTF16.width(scalar)
+            }
+        }
+
+        if !piece.isEmpty {
+            pieces.append(String(piece))
+        }
+
+        return pieces
+    }
+
+    /// Types `text` with key events that carry it (`Keys.type`), `unitsPerKey` UTF-16 units at a time, once held
+    /// modifier keys are let go and `beforeKeys` has passed, as before ⌘V. The pasteboard isn't touched.
+    private func typeWithKeys(_ text: String, beforeKeys: () throws -> Void) throws {
+        try beforeTheKeys(beforeKeys)
+        for (index, piece) in Self.pieces(of: text, unitsEach: Self.unitsPerKey).enumerated() {
+            if index > 0 {
+                sleep(Self.keyPause)
+            }
+
+            try keys.type(piece)
+        }
+    }
+
     /// What happens right before keys go out: held modifier keys are let go, the caller's check runs, and nothing goes
     /// out while a password is being typed somewhere (secure input).
     private func beforeTheKeys(_ check: () throws -> Void) throws {
@@ -126,7 +217,7 @@ public final class PasteTyper {
         }
     }
 
-    private func putBack(_ saved: Contents?, unlessChangedSince ours: Int) {
+    private func putBack(_ saved: Saved, unlessChangedSince ours: Int) {
         if pasteboard.changeCount == ours {
             pasteboard.restore(saved)
         }
@@ -139,14 +230,47 @@ extension PasteTyper {
         /// Goes up whenever anything is copied.
         var changeCount: Int { get }
 
-        /// Every item and every type of each that can be read, to put back; nil when the pasteboard is empty.
-        func save() -> Contents?
+        /// What macOS lets ThumbFree do with the pasteboard (pasteboard privacy, macOS 15.4 and later).
+        var access: PasteboardAccess { get }
+
+        /// Every item and every type of each that can be read, to put back.
+        func save() -> Saved
 
         /// Replaces what's there with `text`, marked for clipboard managers, and returns `changeCount` after.
         func write(_ text: String) throws -> Int
 
-        /// Puts `contents` back; nil empties the pasteboard.
-        func restore(_ contents: Contents?)
+        /// Puts back what `save` found: an empty pasteboard is emptied again, and an unreadable one never touched.
+        func restore(_ saved: Saved)
+    }
+
+    /// What `Pasteboard.save` found.
+    public enum Saved: Equatable, Sendable {
+        case empty
+        case items(Contents)
+        /// Something whose data couldn't be read: macOS didn't allow it, or the app it came from has quit.
+        case unreadable
+    }
+
+    /// What macOS lets ThumbFree do with the pasteboard: NSPasteboard.AccessBehavior (macOS 15.4 and later), which you
+    /// can change in System Settings once macOS has asked. For the guide to explain.
+    public enum PasteboardAccess: Equatable, Sendable {
+        /// Before macOS 15.4: any app reads the pasteboard.
+        case unrestricted
+        /// macOS hasn't asked yet: it asks the first time ThumbFree reads the pasteboard, then turns this to `ask`.
+        case `default`
+        /// macOS asks each time ThumbFree reads the pasteboard.
+        case ask
+        case alwaysAllow
+        /// macOS never lets ThumbFree read the pasteboard (pasting still works).
+        case alwaysDeny
+    }
+
+    /// What `paste` does when the pasteboard can't be read to put it back.
+    public enum Unreadable: Equatable, Sendable {
+        /// Types the text with key events, leaving the pasteboard alone.
+        case typeWithKeys
+        /// Pastes the text all the same: it replaces what was on the pasteboard.
+        case pasteAndReplace
     }
 
     /// The keyboard as the typer uses it: CGEvent (`SystemKeys`), faked in tests.
@@ -162,6 +286,10 @@ extension PasteTyper {
 
         /// Presses and lets go of `chord`.
         func post(_ chord: Chord) throws
+
+        /// Presses and lets go of a key that types `characters` (at most `PasteTyper.unitsPerKey` UTF-16 units),
+        /// whatever the keyboard layout.
+        func type(_ characters: String) throws
     }
 
     /// What was on the pasteboard: each item's types and data, in order.
@@ -281,7 +409,7 @@ extension PasteTyper {
         case pasteboardKeptChanging
         /// The text couldn't be put on the pasteboard.
         case pasteboardUnavailable
-        /// ThumbFree may not send keys: Accessibility is off for it.
+        /// ThumbFree may not send keys: it hasn't the permission to control the computer.
         case notAllowed
         /// A password is being typed somewhere (secure input is on).
         case secureInput

@@ -2,7 +2,7 @@ import XCTest
 @testable import ThumbFreeMac
 
 /// The cases of thumbfree-windows tests/ThumbFree.Core.Tests/TapToDictateKeysTests.cs that apply to Fn, where a tap
-/// counts once the key is let go. The audio level cases of that file are in AudioCaptureTests.
+/// counts once the key is let go. The audio level cases of that file are in ThumbFreeCoreTests' AudioLevelTests.
 final class FnTapKeysTests: XCTestCase {
     private func press(_ keys: inout FnTapKeys, _ key: FnTapKeys.Key = .fn) -> FnTapKeys.Result {
         keys.process(key, down: true)

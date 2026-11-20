@@ -24,7 +24,11 @@ let package = Package(
         .target(name: "ThumbFreeCore"),
         .target(name: "ThumbFreeSpeech", dependencies: ["ThumbFreeCore", "CSherpaOnnx", "CWhisper"]),
         .target(name: "ThumbFreeMac", dependencies: ["ThumbFreeCore"]),
-        .executableTarget(name: "ThumbFree", dependencies: ["ThumbFreeCore", "ThumbFreeSpeech", "ThumbFreeMac"]),
+        // The app's own layer, ported from thumbfree-windows src/ThumbFree.App: settings, History, samples and the log,
+        // in the same file formats as Windows. The ThumbFree executable is a thin launcher for it.
+        .target(name: "ThumbFreeApp", dependencies: ["ThumbFreeCore", "ThumbFreeMac"]),
+        .executableTarget(
+            name: "ThumbFree", dependencies: ["ThumbFreeApp", "ThumbFreeCore", "ThumbFreeSpeech", "ThumbFreeMac"]),
         // Next to the shared test data in tests/vectors and tests/audio (lowercase, as in every ThumbFree repo).
         .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"], path: "tests/ThumbFreeCoreTests"),
         .testTarget(
@@ -32,6 +36,10 @@ let package = Package(
             dependencies: ["ThumbFreeSpeech", "CSherpaOnnx"],
             path: "tests/ThumbFreeSpeechTests"),
         .testTarget(name: "ThumbFreeMacTests", dependencies: ["ThumbFreeMac"], path: "tests/ThumbFreeMacTests"),
+        .testTarget(
+            name: "ThumbFreeAppTests",
+            dependencies: ["ThumbFreeApp", "ThumbFreeCore", "ThumbFreeMac", "ThumbFreeSpeech"],
+            path: "tests/ThumbFreeAppTests"),
         // The speech engines as static libraries with their C headers, linked into the app: sherpa-onnx 2.0.1 with
         // onnxruntime, and whisper.cpp 1.9.5 with ggml (Metal). .github/workflows/engines.yml builds them from the
         // pinned inputs in scripts/engines; the zips, each with its notice, are this repo's release assets. New bytes

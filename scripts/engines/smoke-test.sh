@@ -1,10 +1,10 @@
 #!/bin/bash
-# Links both engine xcframeworks into one Swift program through SwiftPM, as Package.swift will, and runs it: the module
-# maps import, the static libraries link together without clashes, and the versions are the ones pinned. It's built
-# for both slices; the x86_64 build runs through Rosetta on Apple silicon (Rosetta translates AVX2, the most ggml's
-# Intel code uses).
+# Links both engines into one Swift program through SwiftPM, from their zips as Package.swift gets them, and runs it:
+# the zips unpack with their notices, the module maps import, the static libraries link together without clashes, and
+# the versions are the ones pinned. It's built for both slices; the x86_64 build runs through Rosetta on Apple silicon
+# (Rosetta translates AVX2, the most ggml's Intel code uses).
 #
-# scripts/engines/smoke-test.sh [folder with both xcframeworks, default build/engines/out]
+# scripts/engines/smoke-test.sh [folder with both zips, default build/engines/out]
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -13,7 +13,7 @@ work=$root/build/engines/smoke
 
 rm -rf "$work"
 mkdir -p "$work/Sources/EngineSmoke"
-cp -R "$out/CSherpaOnnx.xcframework" "$out/CWhisper.xcframework" "$work/"
+cp "$out/CSherpaOnnx.xcframework.zip" "$out/CWhisper.xcframework.zip" "$work/"
 
 cat > "$work/Package.swift" <<'EOF'
 // swift-tools-version: 5.10
@@ -23,8 +23,8 @@ let package = Package(
     name: "EngineSmoke",
     platforms: [.macOS(.v13)],
     targets: [
-        .binaryTarget(name: "CSherpaOnnx", path: "CSherpaOnnx.xcframework"),
-        .binaryTarget(name: "CWhisper", path: "CWhisper.xcframework"),
+        .binaryTarget(name: "CSherpaOnnx", path: "CSherpaOnnx.xcframework.zip"),
+        .binaryTarget(name: "CWhisper", path: "CWhisper.xcframework.zip"),
         .executableTarget(name: "EngineSmoke", dependencies: ["CSherpaOnnx", "CWhisper"]),
     ]
 )
@@ -38,6 +38,7 @@ let sherpa = String(cString: SherpaOnnxGetVersionStr())
 let onnxruntime = String(cString: SherpaOnnxGetOnnxruntimeVersionStr())
 print("sherpa-onnx \(sherpa) (\(String(cString: SherpaOnnxGetGitSha1()))), onnxruntime \(onnxruntime)")
 precondition(sherpa == "2.0.1", "sherpa-onnx \(sherpa)")
+precondition(onnxruntime == "1.28.2", "onnxruntime \(onnxruntime): the notice is for 1.28.2")
 
 // An empty configuration is rejected with NULL (this links the whole C API).
 var config = SherpaOnnxOfflineRecognizerConfig()
@@ -72,4 +73,14 @@ for arch in arm64 x86_64; do
     echo "::warning::This Mac can't run $arch code (no Rosetta?): the $arch build was linked but not run."
   fi
   echo "::endgroup::"
+done
+
+# SwiftPM keeps what's next to the xcframework in the zip: the app can take the notices from there.
+for name in CSherpaOnnx CWhisper; do
+  notices=(.build/artifacts/*/"$name/$name-NOTICE.txt")
+  if [ ! -s "${notices[0]}" ]; then
+    echo "::error::$name.xcframework.zip unpacked without $name-NOTICE.txt"
+    exit 1
+  fi
+  echo "${notices[0]}: $(wc -c < "${notices[0]}" | tr -d ' ') bytes"
 done

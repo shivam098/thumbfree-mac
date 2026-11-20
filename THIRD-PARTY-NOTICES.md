@@ -8,17 +8,27 @@ keeps its own license.
 The speech engines are linked into the app as static libraries: `CSherpaOnnx.xcframework` and `CWhisper.xcframework`,
 built by [`.github/workflows/engines.yml`](.github/workflows/engines.yml) from the pinned sources in
 [`scripts/engines`](scripts/engines) and published as the
-[`engines-sherpa-onnx-2.0.1`](https://github.com/shivam098/thumbfree-mac/releases/tag/engines-sherpa-onnx-2.0.1) and
-[`engines-whisper-1.9.5`](https://github.com/shivam098/thumbfree-mac/releases/tag/engines-whisper-1.9.5) releases. Each
-release has a `NOTICE.txt` with the license texts.
+[`engines-sherpa-onnx-2.0.1-2`](https://github.com/shivam098/thumbfree-mac/releases/tag/engines-sherpa-onnx-2.0.1-2) and
+[`engines-whisper-1.9.5-2`](https://github.com/shivam098/thumbfree-mac/releases/tag/engines-whisper-1.9.5-2) releases.
+Each engine's zip has its notice next to the xcframework, `CSherpaOnnx-NOTICE.txt` and `CWhisper-NOTICE.txt` (also
+attached to the releases): the license texts of everything below that it links in, with ONNX Runtime's own third-party
+notices. The build checks that the notice covers every library whose code it finds in the engine.
 
 | Component | Used for | License |
 |---|---|---|
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 2.0.1 (C API, its universal2 static libraries without text-to-speech) | Running the Kroko and Parakeet models | Apache-2.0 |
-| [ONNX Runtime](https://onnxruntime.ai) 1.28.2 (inside sherpa-onnx, built by [onnxruntime-build](https://github.com/csukuangfj/onnxruntime-build)) | Neural network inference | MIT |
-| [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank), [kaldi-decoder](https://github.com/k2-fsa/kaldi-decoder), [kaldifst](https://github.com/k2-fsa/kaldifst), [OpenFst](https://github.com/csukuangfj/openfst), [simple-sentencepiece](https://github.com/pkufool/simple-sentencepiece) (inside sherpa-onnx) | Audio features, decoding, tokens | Apache-2.0 |
-| [utf8proc](https://github.com/JuliaStrings/utf8proc) (inside sherpa-onnx) | Unicode text handling | MIT |
-| [KISS FFT](https://github.com/mborgerding/kissfft) (inside sherpa-onnx) | Audio features | BSD-3-Clause |
+| [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank) 1.22.4, [kaldi-decoder](https://github.com/k2-fsa/kaldi-decoder) 0.3.0, [kaldifst](https://github.com/k2-fsa/kaldifst), [OpenFst](https://github.com/csukuangfj/openfst) 1.8.5, [simple-sentencepiece](https://github.com/pkufool/simple-sentencepiece) 0.7 (inside sherpa-onnx) | Audio features, decoding, tokens | Apache-2.0 |
+| [KISS FFT](https://github.com/mborgerding/kissfft) (inside kaldi-native-fbank) | Audio features | BSD-3-Clause |
+| [darts-clone](https://github.com/s-yata/darts-clone) (inside simple-sentencepiece) | Tokens for the punctuation model | BSD-2-Clause |
+| [hclust-cpp](https://github.com/csukuangfj/hclust-cpp) with fastcluster (inside sherpa-onnx) | Speaker clustering (not used by ThumbFree) | BSD-2-Clause |
+| [utf8proc](https://github.com/JuliaStrings/utf8proc) 2.12.0 (inside sherpa-onnx) | Unicode text handling | MIT, and the Unicode data license |
+| [nlohmann/json](https://github.com/nlohmann/json) 3.12.0 (inside sherpa-onnx and ONNX Runtime) | Reading JSON | MIT |
+| [Eigen](https://gitlab.com/libeigen/eigen) 5.0.1 (inside kaldi-decoder) and the version ONNX Runtime pins | Linear algebra | MPL-2.0; used unmodified, source code at <https://gitlab.com/libeigen/eigen> |
+| [ONNX Runtime](https://onnxruntime.ai) 1.28.2 (inside sherpa-onnx: the static build in [onnxruntime-libs v1.28.2](https://github.com/csukuangfj/onnxruntime-libs/releases/tag/v1.28.2)) | Neural network inference | MIT |
+| [protobuf](https://github.com/protocolbuffers/protobuf), [re2](https://github.com/google/re2) (inside ONNX Runtime) | Reading models, text patterns | BSD-3-Clause |
+| [abseil](https://github.com/abseil/abseil-cpp), [flatbuffers](https://github.com/google/flatbuffers), [ONNX](https://github.com/onnx/onnx) (inside ONNX Runtime) | Containers, the model format | Apache-2.0 |
+| [SafeInt](https://github.com/dcleblanc/SafeInt), [GSL](https://github.com/microsoft/GSL), [date](https://github.com/HowardHinnant/date) (inside ONNX Runtime) | Checked arithmetic, spans, times | MIT |
+| [Boost](https://www.boost.org), header-only parts (inside ONNX Runtime) | Type lists | BSL-1.0 |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.5 with [ggml](https://github.com/ggml-org/ggml) (Metal and Accelerate) | Running the Hindi + English models and Silero | MIT |
 
 ## Models

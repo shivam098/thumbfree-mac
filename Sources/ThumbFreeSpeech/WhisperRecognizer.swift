@@ -48,8 +48,12 @@ public final class WhisperRecognizer: Recognizer, @unchecked Sendable {
     private let aborted = Flag()
     private var closed = false
 
+    /// Loads a Whisper model (a ggml file). Waits for ggml's warm-up first (`ThumbFreeSpeech.warmUp`), starting it if
+    /// nothing has, so the first whisper.cpp object in a process takes seconds longer unless the warm-up has run: ggml
+    /// compiles its Metal shaders then.
     public init(modelPath: String, options: RecognizerOptions = RecognizerOptions()) throws {
         guard Files.isFile(modelPath) else { throw SpeechError.notFound("Speech model not found.", modelPath) }
+        Ggml.wait()
         _ = quietWhisperLogs
 
         // Whisper.net's defaults: the GPU (Metal), without flash attention.
@@ -195,5 +199,5 @@ public final class WhisperRecognizer: Recognizer, @unchecked Sendable {
 }
 
 /// whisper.cpp and ggml log to stderr; Whisper.net drops their logs by default, and so does this. Read it once before
-/// using whisper.cpp.
+/// using whisper.cpp (the warm-up does).
 let quietWhisperLogs: Void = whisper_log_set({ _, _, _ in }, nil)

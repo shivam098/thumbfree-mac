@@ -15,7 +15,7 @@ final class RecognizerTests: XCTestCase {
     func testSherpaRunsWithItsOwnOnnxruntimeLinkedIn() {
         print(ThumbFreeSpeech.engines)
         XCTAssertEqual(Sherpa.version, "2.0.1")
-        XCTAssertFalse(Sherpa.onnxruntimeVersion.isEmpty)
+        XCTAssertEqual(Sherpa.onnxruntimeVersion, "1.28.2")
         XCTAssertEqual(WhisperRecognizer.version, "1.9.5")
 
         // Linked into this binary: no onnxruntime or sherpa-onnx library comes from anywhere else (Homebrew's, say).
@@ -241,6 +241,33 @@ final class RecognizerTests: XCTestCase {
         for (text, expected) in cases {
             XCTAssertEqual(StreamingRecognizer.firstMarks(text), expected, text)
         }
+    }
+
+    /// Runs before the Whisper and Silero tests (the tests run in name order), so it pays for ggml's setup.
+    func testEnginesWarmUpOnceInTheBackgroundAndADetectorWorksAfterwards() async throws {
+        // Callers on many threads: one warm-up, and each callback once (more than once fails the test).
+        let first = expectation(description: "the first callback")
+        let second = expectation(description: "the second callback")
+        ThumbFreeSpeech.warmUp { first.fulfill() }
+        DispatchQueue.concurrentPerform(iterations: 8) { _ in ThumbFreeSpeech.warmUp() }
+        ThumbFreeSpeech.warmUp { second.fulfill() }
+        let started = Date()
+        await ThumbFreeSpeech.waitForWarmUp()
+        print("ggml warm-up: \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+        await fulfillment(of: [first, second], timeout: 10)
+        XCTAssertTrue(ThumbFreeSpeech.isWarmedUp)
+        XCTAssertEqual(Ggml.runs, 1)
+
+        // Once it's done, a callback comes straight away and nothing runs again.
+        let late = expectation(description: "a callback after the warm-up")
+        ThumbFreeSpeech.warmUp { late.fulfill() }
+        await fulfillment(of: [late], timeout: 10)
+
+        let path = try TestModels.require(ModelCatalog.vad)
+        let detector = try timed("silero load after the warm-up") { try SpeechDetector(modelPath: path) }
+        defer { detector.close() }
+        XCTAssertFalse(try detector.detect(Audio.read("send-logs.wav")).isEmpty)
+        XCTAssertEqual(Ggml.runs, 1)
     }
 
     func testKrokoFinishesAPhraseAtEachPauseWhileYouSpeak() throws {

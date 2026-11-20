@@ -289,7 +289,8 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertEqual(try snapshot(inside, alongside), before)
     }
 
-    /// The same bytes for the same seed (SplitMix64), as `new Random(seed).NextBytes` gives the C# tests.
+    /// Deterministic bytes for a seed (SplitMix64). The C# tests use `new Random(seed).NextBytes`, which this doesn't
+    /// reproduce: the tests only need the same bytes on every run, not the C# bytes.
     private func randomBytes(_ seed: Int, _ length: Int = 300_000) -> Data {
         var data = Data(capacity: length)
         var state = UInt64(truncatingIfNeeded: seed)

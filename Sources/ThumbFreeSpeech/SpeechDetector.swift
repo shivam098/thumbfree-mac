@@ -20,8 +20,12 @@ public final class SpeechDetector: @unchecked Sendable {
     private let gate = NSLock()
     private var closed = false
 
+    /// Loads the Silero model (whisper.cpp's ggml file). Waits for ggml's warm-up first (`ThumbFreeSpeech.warmUp`),
+    /// starting it if nothing has, so the first whisper.cpp object in a process takes seconds longer unless the warm-up
+    /// has run: ggml compiles its Metal shaders then.
     public init(modelPath: String, threshold: Float = 0.5) throws {
         guard Files.isFile(modelPath) else { throw SpeechError.notFound("Voice activity model not found.", modelPath) }
+        Ggml.wait()
         _ = quietWhisperLogs
         var contextParams = whisper_vad_default_context_params()
         contextParams.n_threads = 2

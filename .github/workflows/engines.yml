@@ -2,8 +2,9 @@ name: Engines
 
 # Builds the speech engines as static xcframeworks for Package.swift's binary targets: CSherpaOnnx (sherpa-onnx with
 # onnxruntime, for Kroko and Parakeet) and CWhisper (whisper.cpp with ggml, Metal and Accelerate, for the Hindi +
-# English models and Silero). The zips and their notices are uploaded as this run's artifact, then published as assets
-# of the releases engines-sherpa-onnx-<version> and engines-whisper-<version>; Package.swift pins URLs and checksums.
+# English models and Silero), each zipped with its notice. The zips and notices are uploaded as this run's artifact,
+# then published as assets of the releases engines-sherpa-onnx-<version>-<n> and engines-whisper-<version>-<n> (a new
+# tag for new bytes: SwiftPM caches artifacts by URL); Package.swift pins URLs and checksums.
 on:
   workflow_dispatch:
   # workflow_dispatch works only once this file is on main; until then, a push to mac-speech that changes the engine
@@ -23,11 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The Xcode and CMake that scripts/engines/common.sh pins; the build scripts refuse others.
+      - name: Toolchain
+        run: |
+          source scripts/engines/common.sh
+          sudo xcode-select -s "/Applications/Xcode_$xcode_version.app"
+          bash scripts/engines/install-cmake.sh "$RUNNER_TEMP/cmake" >> "$GITHUB_PATH"
+
       - name: Tools
         run: |
           sw_vers
           xcodebuild -version
           swift --version
+          command -v cmake
           cmake --version
 
       - name: sherpa-onnx
@@ -36,7 +45,7 @@ jobs:
       - name: whisper.cpp
         run: bash scripts/engines/build-whisper.sh build/engines/out
 
-      - name: Link both into a Swift program and run it (arm64, and x86_64 through Rosetta)
+      - name: Link both zips into a Swift program and run it (arm64, and x86_64 through Rosetta)
         run: bash scripts/engines/smoke-test.sh build/engines/out
 
       - name: Checksums for Package.swift

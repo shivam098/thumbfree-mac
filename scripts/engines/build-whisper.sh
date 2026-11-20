@@ -6,9 +6,10 @@
 # whisper.cpp has no prebuilt xcframework for a release. Its build-xcframework.sh builds a dynamic framework for every
 # Apple platform, with one CMake build for both Mac architectures, which leaves ggml without its NEON and AVX2 code
 # (ggml picks those per architecture). This builds only the Mac, with the same options, once per architecture, and
-# merges the static libraries.
+# merges the static libraries. CWhisper-NOTICE.txt, with the license, goes next to the xcframework in the zip.
 #
-# On a Mac with Xcode and CMake: scripts/engines/build-whisper.sh [output folder, default build/engines/out]
+# On a Mac with Xcode and CMake (common.sh pins both): scripts/engines/build-whisper.sh [output folder, default
+# build/engines/out]
 set -euo pipefail
 
 version=1.9.5
@@ -16,6 +17,7 @@ commit=d1be6fde11ac6e0407606b4e42fe72d34add8037
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 source "$root/scripts/engines/common.sh"
+check_toolchain cmake
 mkdir -p "${1:-$root/build/engines/out}"
 out=$(cd "${1:-$root/build/engines/out}" && pwd)
 work=$root/build/engines/whisper
@@ -118,14 +120,18 @@ module CWhisper [system] {
 }
 EOF
 
-package_xcframework CWhisper "$work/libCWhisper.a" "$work/Headers" "$out"
-
+notice=$out/CWhisper-NOTICE.txt
 {
   echo "CWhisper.xcframework: whisper.cpp $version (https://github.com/ggml-org/whisper.cpp, commit $commit),"
-  echo "with ggml, built by scripts/engines/build-whisper.sh in https://github.com/shivam098/thumbfree-mac."
-  echo
-  echo "================================================================================"
-  echo "whisper.cpp and ggml"
-  echo "================================================================================"
+  echo "with ggml, as one static library. Built by scripts/engines/build-whisper.sh in"
+  echo "https://github.com/shivam098/thumbfree-mac, with $(toolchain). whisper.cpp and ggml are"
+  echo "used unmodified, under the license that follows."
+  section "whisper.cpp and ggml"
   cat "$work/src/LICENSE"
-} > "$out/CWhisper-NOTICE.txt"
+} > "$notice"
+
+check_notice "$work/libCWhisper.a" "$notice" \
+  "_whisper_|whisper.cpp|The ggml authors" \
+  "_ggml_|ggml|The ggml authors"
+
+package_xcframework CWhisper "$work/libCWhisper.a" "$work/Headers" "$out"

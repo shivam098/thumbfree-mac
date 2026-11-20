@@ -1,10 +1,48 @@
 # Shared by the engine build scripts (sourced, not run).
 
+# The toolchain the released engines are built with: another Xcode or CMake makes other bytes. engines.yml selects
+# this Xcode and installs this CMake (install-cmake.sh); the build scripts refuse others.
+xcode_version=16.4
+xcode_build=16F6
+cmake_version=4.4.5
+cmake_sha256=679e77a96b9ef9484cc6c1445255fc4f84206b48a65420efbedf16bdab55fbff
+
+# The toolchain, for the notices.
+toolchain() {
+  echo "Xcode $xcode_version ($xcode_build) and CMake $cmake_version"
+}
+
+# Fails unless the selected Xcode is the pinned one, and with "cmake", unless the CMake on PATH is too.
+check_toolchain() {
+  local xcode cmake
+  xcode=$(xcodebuild -version | tr '\n' ' ')
+  if [ "$xcode" != "Xcode $xcode_version Build version $xcode_build " ]; then
+    echo "::error::The engines are built with Xcode $xcode_version ($xcode_build), but $(xcode-select -p) is" \
+      "$xcode. Select it with: sudo xcode-select -s /Applications/Xcode_$xcode_version.app"
+    return 1
+  fi
+
+  if [ "${1:-}" = cmake ]; then
+    cmake=$(cmake --version 2> /dev/null || true)
+    cmake=${cmake%%$'\n'*}
+    if [ "$cmake" != "cmake version $cmake_version" ]; then
+      echo "::error::The engines are built with CMake $cmake_version, but the cmake on PATH is" \
+        "'${cmake:-missing}'. Install it with scripts/engines/install-cmake.sh and put its folder first on PATH."
+      return 1
+    fi
+  fi
+}
+
 # Downloads $1 to $2 and checks it against the SHA-256 $3.
 fetch() {
   curl --fail --location --silent --show-error --retry 5 --retry-all-errors --output "$2" "$1"
-  if ! echo "$3  $2" | shasum -a 256 --check --status; then
-    echo "::error::$2 from $1 has SHA-256 $(shasum -a 256 "$2" | cut -d ' ' -f 1), expected $3"
+  check_sha256 "$2" "$3" "$1"
+}
+
+# Fails unless the file $1 (from $3, for the message) has the SHA-256 $2.
+check_sha256() {
+  if ! echo "$2  $1" | shasum -a 256 --check --status; then
+    echo "::error::$1${3:+ from $3} has SHA-256 $(shasum -a 256 "$1" | cut -d ' ' -f 1), expected $2"
     return 1
   fi
 }
@@ -22,45 +60,50 @@ merge_static() {
   echo "$output: $(grep -c 'same member name' "$output.log" || true) duplicate object names (all kept)"
 }
 
-# Makes $4/$1.xcframework from the universal static library $2 and the headers folder $3, and zips it with the
-# xcframework at the root of the zip (as SwiftPM expects). Fixed file times, no extra attributes and sorted entries make
-# the zip the same for the same inputs.
+# Makes $4/$1.xcframework from the universal static library $2 and the headers folder $3, and zips it with its notice
+# $4/$1-NOTICE.txt, both at the root of the zip (SwiftPM finds the xcframework there). Fixed file times, no extra
+# attributes and sorted entries make the zip the same for the same inputs.
 package_xcframework() {
   local name=$1 library=$2 headers=$3 out=$4
   lipo "$library" -verify_arch arm64 x86_64
+  if [ ! -s "$out/$name-NOTICE.txt" ]; then
+    echo "::error::$out/$name-NOTICE.txt is missing: the notice goes into the zip"
+    return 1
+  fi
+
   rm -rf "${out:?}/$name.xcframework" "$out/$name.xcframework.zip"
   xcodebuild -create-xcframework -library "$library" -headers "$headers" -output "$out/$name.xcframework"
   (
     cd "$out"
-    find "$name.xcframework" -exec touch -h -t 200001010000 {} +
-    find "$name.xcframework" | LC_ALL=C sort | zip -X -q -@ "$name.xcframework.zip"
+    find "$name.xcframework" "$name-NOTICE.txt" -exec touch -h -t 200001010000 {} +
+    find "$name.xcframework" "$name-NOTICE.txt" | LC_ALL=C sort | zip -X -q -@ "$name.xcframework.zip"
   )
   ls -l "$out/$name.xcframework.zip"
+  echo "$name: library SHA-256 $(shasum -a 256 "$library" | cut -d ' ' -f 1)"
 }
 
-# The MIT License with the copyright line $1.
-mit_license() {
-  cat <<EOF
-MIT License
+# Fails unless the notice $2 covers every library linked into the static library $1. Each further argument is
+# "symbols|library|text": when a defined symbol contains `symbols` (a mangled C++ namespace or a C prefix), the notice
+# must contain `text`, a line from that library's license.
+check_notice() {
+  local library=$1 notice=$2 entry pattern name text
+  shift 2
+  nm -gjU "$library" > "$library.symbols" 2> /dev/null
+  for entry in "$@"; do
+    IFS='|' read -r pattern name text <<< "$entry"
+    if grep -q -F -- "$pattern" "$library.symbols"; then
+      if ! grep -q -F -- "$text" "$notice"; then
+        echo "::error::$name is linked into $(basename "$library"), but its license ('$text') isn't in the notice"
+        return 1
+      fi
+      echo "linked in, license in the notice: $name"
+    fi
+  done
+  rm "$library.symbols"
+}
 
-$1
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-EOF
+# A heading in a notice.
+section() {
+  local rule=================================================================================
+  printf '\n%s\n%s\n%s\n\n' "$rule" "$1" "$rule"
 }

@@ -1,20 +1,22 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import ThumbFreeCore
 
 /// The microphone as 16 kHz mono Float32 samples, the format every speech model takes, in chunks of 30 ms (480
-/// samples, the Windows app's microphone buffers), each with its level for the pill's meter. Audio stays in memory and
-/// is never written to disk.
+/// samples, the Windows app's microphone buffers), each with its level for the pill's meter (ThumbFreeCore's
+/// AudioLevel). Audio stays in memory and is never written to disk.
 ///
 /// AVAudioEngine's input is converted with AVAudioConverter. When the input device changes (another default input, or
 /// a new rate or channel count), the capture starts again on the new one by itself. The conversion (Converter), the
-/// chunks (Chunker), the level (`level(of:)`) and the silent-microphone check (SilenceWatch) are separate so they can
-/// be tested with made-up buffers; the microphone itself is behind Input.
+/// chunks (Chunker) and the silent-microphone check (SilenceWatch) are separate so they can be tested with made-up
+/// buffers; the microphone itself is behind Input.
 ///
 /// Without the Microphone permission (Permissions), macOS sends silence, which SilenceWatch reports.
 @MainActor
 public final class AudioCapture {
-    nonisolated public static let sampleRate = 16_000
+    /// The speech engines' rate (ThumbFreeCore's `Decoding.sampleRate`).
+    nonisolated public static let sampleRate = Decoding.sampleRate
     nonisolated public static let chunkSamples = 480
 
     /// Runs on the capture thread with each chunk, in order. One more chunk may come just after `stop()`.
@@ -80,24 +82,6 @@ public final class AudioCapture {
             onFailure?(error)
         }
     }
-
-    /// Loudness for the level meter: 0 for silence (at or below -60 dBFS) up to 1 for loud speech (-12 dBFS and
-    /// above), from the RMS. The port of the C# core's `AudioLevel.Of`.
-    nonisolated public static func level<Samples: Collection>(of samples: Samples) -> Float
-    where Samples.Element == Float {
-        guard !samples.isEmpty else { return 0 }
-        var sum = 0.0
-        for sample in samples {
-            sum += Double(sample * sample)
-        }
-
-        let rms = (sum / Double(samples.count)).squareRoot()
-        guard rms > 0 else { return 0 }
-        let floorDb = -60.0
-        let ceilingDb = -12.0
-        let db = 20 * log10(rms)
-        return Float(min(max((db - floorDb) / (ceilingDb - floorDb), 0), 1))
-    }
 }
 
 extension AudioCapture {
@@ -105,12 +89,12 @@ extension AudioCapture {
     public struct Chunk: Equatable, Sendable {
         /// 16 kHz mono samples, from -1 to 1.
         public var samples: [Float]
-        /// The level meter's value for these samples, from 0 to 1.
+        /// The level meter's value for these samples, from 0 to 1 (ThumbFreeCore's AudioLevel).
         public var level: Float
 
         public init(samples: [Float]) {
             self.samples = samples
-            level = AudioCapture.level(of: samples)
+            level = AudioLevel.of(samples)
         }
     }
 

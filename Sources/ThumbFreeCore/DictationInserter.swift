@@ -49,7 +49,10 @@ public struct StatusUpdate: Equatable, Sendable {
 public protocol Desktop: AnyObject {
     func foregroundWindow() -> WindowInfo?
 
-    func checkFocusedField() -> FieldCheck
+    /// What kind of field has the focus. May throw as `typeText` does, before anything is typed or refused: the
+    /// Windows host throws here when the password field that has the focus isn't the dictation's own text box, and then
+    /// keeps the dictation to copy instead of refusing it.
+    func checkFocusedField() throws -> FieldCheck
 
     /// True if the focused text field ends in a non-space character (so a leading space is needed); nil if unknown.
     func focusedTextEndsWithNonWhitespace() -> Bool?
@@ -183,7 +186,7 @@ public final class DictationInserter {
         }
 
         let refusal: String?
-        switch desktop.checkFocusedField() {
+        switch try desktop.checkFocusedField() {
         case .password: refusal = Self.passwordRefusal
         case .elevated: refusal = "That window runs as administrator; Windows won't let me type into it."
         case .safe, .unknown: refusal = nil

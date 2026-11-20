@@ -436,13 +436,14 @@ public struct NetMatch {
     /// `Match.Value`.
     public var value: String { String(text[range]) }
 
-    /// Where group `index` matched, or nil if it took no part in the match.
+    /// Where group `index` matched, or nil if it took no part in the match or the pattern has no such group.
     public func groupRange(_ index: Int) -> Range<String.Index>? {
+        guard index >= 0 && index < result.numberOfRanges else { return nil }
         let found = result.range(at: index)
         return found.location == NSNotFound ? nil : NetMatch.bounds(found, in: text)
     }
 
-    /// `Groups[index].Value`: "" for a group that took no part.
+    /// `Groups[index].Value`: "" for a group that took no part, or that the pattern doesn't have.
     public func group(_ index: Int) -> String { groupRange(index).map { String(text[$0]) } ?? "" }
 
     /// `Groups[name].Value`, for a group the pattern names: "" if it took no part.

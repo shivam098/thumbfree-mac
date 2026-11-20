@@ -92,6 +92,16 @@ final class NetRegexTests: XCTestCase {
         XCTAssertEqual("a<b>c", noGroups.replace("abc", "<$0>"))
     }
 
+    func testAGroupThePatternDoesntHaveIsEmpty() throws {
+        // As .NET's Groups[n], which is an empty group for a number the pattern doesn't have.
+        let match = try XCTUnwrap(NetRegex("(b)").match("abc"))
+        XCTAssertEqual("b", match.group(1))
+        XCTAssertEqual("", match.group(2))
+        XCTAssertEqual("", match.group(-1))
+        XCTAssertNil(match.groupRange(2))
+        XCTAssertNil(match.groupRange(-1))
+    }
+
     func testWholeWordsAreMatchedLiterally() {
         let regex = NetRegex.wholeWord("c++ (x) $5")
         let text = "I like c++ (X) $5 a lot, c++ (x) $5x too"

@@ -5,6 +5,8 @@ import XCTest
 final class DictationInserterTests: XCTestCase {
     private struct TypingFailed: Error {}
 
+    private struct FieldChanged: Error {}
+
     private final class FakeDesktop: Desktop {
         var foreground: WindowInfo? = WindowInfo(handle: 1, processId: 1, processName: "slack", title: "Slack")
         var field = FieldCheck.safe
@@ -14,9 +16,18 @@ final class DictationInserterTests: XCTestCase {
         /// How many more keystrokes go through before typing fails (the text box lost focus, say); nil: never.
         var failAfter: Int?
 
+        /// The field check throws, as the Windows host's does for a password field that isn't the dictation's box.
+        var fieldChanged = false
+
         func foregroundWindow() -> WindowInfo? { foreground }
 
-        func checkFocusedField() -> FieldCheck { field }
+        func checkFocusedField() throws -> FieldCheck {
+            if fieldChanged {
+                throw FieldChanged()
+            }
+
+            return field
+        }
 
         func focusedTextEndsWithNonWhitespace() -> Bool? { endsWithText }
 
@@ -207,6 +218,22 @@ final class DictationInserterTests: XCTestCase {
         desktop.failAfter = 0
         XCTAssertThrowsError(try inserter.repeatLast()) { XCTAssertTrue($0 is TypingFailed) }
         XCTAssertThrowsError(try inserter.typePrepared("More.")) { XCTAssertTrue($0 is TypingFailed) }
+        XCTAssertTrue(desktop.actions.isEmpty)
+        XCTAssertEqual(reported, statuses.updates.count)
+        XCTAssertEqual("Hello there", inserter.lastText)
+    }
+
+    func testAFieldCheckThatThrowsNeitherTypesNorRefuses() throws {
+        // The Windows host's check throws when the password field that has the focus isn't the dictation's own text
+        // box, and keeps the dictation to copy: nothing is typed, no refusal is shown and the last dictation is kept.
+        try inserter.insert("hello there")
+        let reported = statuses.updates.count
+        desktop.actions.removeAll()
+        desktop.field = .password
+        desktop.fieldChanged = true
+        XCTAssertThrowsError(try inserter.insert("open sesame")) { XCTAssertTrue($0 is FieldChanged) }
+        XCTAssertThrowsError(try inserter.typePrepared("More.")) { XCTAssertTrue($0 is FieldChanged) }
+        XCTAssertThrowsError(try inserter.repeatLast()) { XCTAssertTrue($0 is FieldChanged) }
         XCTAssertTrue(desktop.actions.isEmpty)
         XCTAssertEqual(reported, statuses.updates.count)
         XCTAssertEqual("Hello there", inserter.lastText)

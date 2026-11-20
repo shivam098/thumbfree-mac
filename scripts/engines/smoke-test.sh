@@ -1,8 +1,10 @@
 #!/bin/bash
 # Links both engine xcframeworks into one Swift program through SwiftPM, as Package.swift will, and runs it: the module
-# maps import, the static libraries link together without clashes, and the versions are the ones pinned.
+# maps import, the static libraries link together without clashes, and the versions are the ones pinned. It's built
+# for both slices; the x86_64 build runs through Rosetta on Apple silicon (Rosetta translates AVX2, the most ggml's
+# Intel code uses).
 #
-# scripts/engines/smoke-test.sh [folder with CSherpaOnnx.xcframework and CWhisper.xcframework, default build/engines/out]
+# scripts/engines/smoke-test.sh [folder with both xcframeworks, default build/engines/out]
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -55,8 +57,19 @@ print("ok")
 EOF
 
 cd "$work"
-swift build -c release 2>&1 | tee build.log
-if grep -q "warning:" build.log; then
-  grep "warning:" build.log | sort -u | sed 's/^/::warning::/'
-fi
-"$(swift build -c release --show-bin-path)/EngineSmoke"
+for arch in arm64 x86_64; do
+  echo "::group::$arch"
+  swift build -c release --arch "$arch" 2>&1 | tee "build-$arch.log"
+  if grep -q "warning:" "build-$arch.log"; then
+    grep "warning:" "build-$arch.log" | sort -u | sed 's/^/::warning::/'
+  fi
+
+  program="$(swift build -c release --arch "$arch" --show-bin-path)/EngineSmoke"
+  lipo -info "$program"
+  if /usr/bin/arch "-$arch" /usr/bin/true 2> /dev/null; then
+    /usr/bin/arch "-$arch" "$program"
+  else
+    echo "::warning::This Mac can't run $arch code (no Rosetta?): the $arch build was linked but not run."
+  fi
+  echo "::endgroup::"
+done

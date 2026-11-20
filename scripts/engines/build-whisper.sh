@@ -1,12 +1,12 @@
 #!/bin/bash
 # Builds CWhisper.xcframework.zip for Package.swift's CWhisper binary target: whisper.cpp with ggml (Metal, with its
-# shaders built in, plus Accelerate) for macOS on Apple silicon and Intel, as one static library with whisper.h, the ggml
-# headers it includes, and a module map.
+# shaders built in, plus Accelerate) for macOS on Apple silicon and Intel, as one static library with whisper.h, the
+# ggml headers it includes, and a module map.
 #
 # whisper.cpp has no prebuilt xcframework for a release. Its build-xcframework.sh builds a dynamic framework for every
-# Apple platform, with one CMake build for both Mac architectures, which leaves ggml without its NEON and AVX2 code (ggml
-# picks those per architecture). This builds only the Mac, with the same options, once per architecture, and merges the
-# static libraries.
+# Apple platform, with one CMake build for both Mac architectures, which leaves ggml without its NEON and AVX2 code
+# (ggml picks those per architecture). This builds only the Mac, with the same options, once per architecture, and
+# merges the static libraries.
 #
 # On a Mac with Xcode and CMake: scripts/engines/build-whisper.sh [output folder, default build/engines/out]
 set -euo pipefail
@@ -65,8 +65,8 @@ build() {
     return 1
   fi
 
-  # The objects of whisper and the ggml libraries it links. CMake's archives keep each object's build time, which libtool
-  # copies, so the objects themselves are merged, with a fixed time: the same sources give the same bytes.
+  # The objects of whisper and the ggml libraries it links. CMake's archives keep each object's build time, which
+  # libtool copies, so the objects themselves are merged, with a fixed time: the same sources give the same bytes.
   local objects=() expected=0 target folder object library
   for target in whisper ggml ggml-base ggml-cpu ggml-metal ggml-blas; do
     folder=$(find "$dir" -type d -name "$target.dir" | head -n 1)

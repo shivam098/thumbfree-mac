@@ -402,7 +402,9 @@ struct NetRegex: @unchecked Sendable {
     }
 }
 
-/// A match of a `NetRegex` (.NET's `Match`), with positions as `String.Index`es in `text`.
+/// A match of a `NetRegex` (.NET's `Match`), with positions as `String.Index`es in `text`. A match may start or end
+/// inside a `Character` (before a combining mark, or between \r and \n), as it does in C#: its bounds are always
+/// between Unicode scalars, so slicing `text` with them keeps every scalar.
 struct NetMatch {
     /// The text that was searched.
     let text: String
@@ -415,11 +417,7 @@ struct NetMatch {
     init(_ text: String, _ result: NSTextCheckingResult) {
         self.text = text
         self.result = result
-        guard let range = Range(result.range, in: text) else {
-            preconditionFailure("A match outside its text")
-        }
-
-        self.range = range
+        range = NetMatch.bounds(result.range, in: text)
     }
 
     /// `Match.Value`.
@@ -428,7 +426,7 @@ struct NetMatch {
     /// Where group `index` matched, or nil if it took no part in the match.
     func groupRange(_ index: Int) -> Range<String.Index>? {
         let found = result.range(at: index)
-        return found.location == NSNotFound ? nil : Range(found, in: text)
+        return found.location == NSNotFound ? nil : NetMatch.bounds(found, in: text)
     }
 
     /// `Groups[index].Value`: "" for a group that took no part.
@@ -437,7 +435,13 @@ struct NetMatch {
     /// `Groups[name].Value`.
     func group(named name: String) -> String {
         let found = result.range(withName: name)
-        guard found.location != NSNotFound, let range = Range(found, in: text) else { return "" }
-        return String(text[range])
+        return found.location == NSNotFound ? "" : String(text[NetMatch.bounds(found, in: text)])
+    }
+
+    /// The UTF-16 range ICU reports, as indices. (`Range(_:in:)` would be nil for bounds that aren't `Character`
+    /// boundaries.)
+    private static func bounds(_ range: NSRange, in text: String) -> Range<String.Index> {
+        let start = text.utf16.index(text.startIndex, offsetBy: range.location)
+        return start..<text.utf16.index(start, offsetBy: range.length)
     }
 }

@@ -91,4 +91,13 @@ final class NetRegexTests: XCTestCase {
         XCTAssertEqual(["", "a", ""], NetRegex(",").split(",a,"))
         XCTAssertEqual(["abc"], NetRegex(",").split("abc"))
     }
+
+    func testMatchesMayEndInsideACharacter() {
+        // As in C#, a match may stop before a combining mark or between \r and \n; no scalar is lost.
+        let words = NetRegex(#"\p{L}+"#).matches("cafe\u{301}s").map { Array($0.value.unicodeScalars) }
+        XCTAssertEqual([Array("cafe".unicodeScalars), ["s"]], words)
+        XCTAssertEqual(Array("a\r b".unicodeScalars), Array(NetRegex("\n").replace("a\r\nb", " ").unicodeScalars))
+        let capital = NetRegex(#"^\p{L}"#).replace("cafe\u{301}", "C")
+        XCTAssertEqual(Array("Cafe\u{301}".unicodeScalars), Array(capital.unicodeScalars))
+    }
 }

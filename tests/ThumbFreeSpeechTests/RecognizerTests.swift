@@ -398,7 +398,7 @@ final class RecognizerTests: XCTestCase {
             sampleRate: rate,
             phrasePauseMs: 1200)
         let logs = try Audio.read("send-logs.wav")
-        let audio = logs + Audio.silence(ms: 1500) + Audio.read("genres.wav")
+        let audio = try logs + Audio.silence(ms: 1500) + Audio.read("genres.wav")
         let text = try await preview.update(audio)
         print("preview: \(preview.phrases) + \(preview.tentative)")
 

@@ -36,3 +36,15 @@ Both apps use Fn, so run one at a time; each one tells you if the other is runni
 `tests/vectors` (how each test sentence must come out) and `tests/audio` (speech recordings) are the same files in
 every ThumbFree repo. The **Test data in sync** check fails while this copy differs from the others: when you change
 one, copy the change to all four repos.
+
+## Develop
+
+A Swift package for macOS 13 or later (`Package.swift`): the libraries ThumbFreeCore, ThumbFreeSpeech and ThumbFreeMac,
+and the ThumbFree app. GitHub's macOS runners build and test it on every change, and build a test `ThumbFree.app` in a
+`.dmg` (the **App** workflow's artifact). On a Mac:
+
+```sh
+swift build
+swift test
+scripts/make-app.sh    # dist/ThumbFree-<version>.dmg, universal and ad-hoc signed
+```

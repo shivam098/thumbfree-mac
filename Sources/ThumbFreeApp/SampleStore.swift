@@ -144,7 +144,8 @@ public final class SampleStore: @unchecked Sendable {
     public func summary() -> SampleSummary {
         do {
             let samples = try self.samples()
-            return SampleSummary(count: samples.count, bytes: try samples.reduce(Int64(0)) { $0 + (try Self.size($1)) })
+            let bytes = try samples.reduce(Int64(0)) { total, sample in try total + Self.size(sample) }
+            return SampleSummary(count: samples.count, bytes: bytes)
         } catch {
             return SampleSummary(count: 0, bytes: 0)
         }

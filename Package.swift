@@ -38,11 +38,11 @@ let package = Package(
         // get a new release tag, since SwiftPM caches what it downloads by URL.
         .binaryTarget(
             name: "CSherpaOnnx",
-            url: "\(engines)/engines-sherpa-onnx-2.0.1-2/CSherpaOnnx.xcframework.zip",
-            checksum: "5946bf62376d667719db941a797570b875152bac08fd1b6ec0f7bc592d1cd637"),
+            url: "\(engines)/engines-sherpa-onnx-2.0.1-3/CSherpaOnnx.xcframework.zip",
+            checksum: "b2c70cbca97df58d8903b05533238381a46f0c157d8e2949aeaceaecf282c1aa"),
         .binaryTarget(
             name: "CWhisper",
-            url: "\(engines)/engines-whisper-1.9.5-2/CWhisper.xcframework.zip",
-            checksum: "e0ffe943d2b81dd6a8fde88ca08ba64d52999bedf03f7a35d71e722433b97105"),
+            url: "\(engines)/engines-whisper-1.9.5-3/CWhisper.xcframework.zip",
+            checksum: "3e2115f584fb47683e9cc16a46f3bb537e6438e33a88f3d8dbb17a7fa4db5b71"),
     ]
 )

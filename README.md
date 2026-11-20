@@ -7,7 +7,8 @@ punctuated. Speech is recognised on your Mac; nothing you say is uploaded, and t
 
 **Status: in development.** There's nothing to install yet. The dictation app is in place (the menu bar, the dictation
 key, typing, notifications, model downloads) and CI builds it as a test `.dmg`, but it still has to pass a check on a
-real Mac, and its window and first-run guide come next. The design and the plan are in [docs/mac.md](docs/mac.md).
+real Mac, and its window and first-run guide come next. The design and the plan are in [docs/mac.md](docs/mac.md);
+to try a test build on your Mac and help check it, see [docs/mac-testing.md](docs/mac-testing.md).
 
 ThumbFree also runs on [Android](https://github.com/shivam098/thumbfree-android) and
 [Windows](https://github.com/shivam098/thumbfree-windows), and an [iPhone](https://github.com/shivam098/thumbfree-ios)

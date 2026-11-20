@@ -114,7 +114,7 @@ final class TestServer: @unchecked Sendable {
 
     /// Reads until the end of the request's headers.
     private func receive(_ connection: NWConnection, _ received: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, done, error in
             guard let self else { return }
             var head = received
             if let content {
@@ -123,7 +123,7 @@ final class TestServer: @unchecked Sendable {
 
             if let end = head.range(of: Data("\r\n\r\n".utf8)) {
                 self.respond(connection, String(decoding: head[..<end.lowerBound], as: UTF8.self))
-            } else if isComplete || error != nil {
+            } else if done || error != nil {
                 connection.cancel()
             } else {
                 self.receive(connection, head)

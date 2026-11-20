@@ -5,8 +5,8 @@ import ThumbFreeCore
 /// `transcribe` runs on the speech thread, one call at a time; `abort` may be called from any thread, so a cancelled
 /// dictation never waits for a result nobody wants.
 public protocol Recognizer: AnyObject, Sendable {
-    /// Raw text for 16 kHz mono audio, or nil if aborted (or closed). `preview` trades accuracy for speed where the engine
-    /// can; `prompt` is a vocabulary hint only Whisper uses.
+    /// Raw text for 16 kHz mono audio, or nil if aborted (or closed). `preview` trades accuracy for speed where the
+    /// engine can; `prompt` is a vocabulary hint only Whisper uses.
     func transcribe(_ samples16k: [Float], preview: Bool, prompt: String?) throws -> String?
 
     /// Stops the call in progress (or throws its result away); later calls return nil until `resume`.

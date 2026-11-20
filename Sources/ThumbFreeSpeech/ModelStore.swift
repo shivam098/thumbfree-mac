@@ -26,10 +26,10 @@ public struct DownloadError: Error, Equatable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
-/// Speech models on this Mac (the Android and Windows apps' ModelStore). Downloads go to a primary folder; models are also
-/// found, read only, in shared folders, where Voice Assistant keeps the same models, so they aren't downloaded twice. A
-/// model is one or more files; each download resumes after a dropped connection and is checked against its pinned
-/// SHA-256 before it gets its final name (a mismatch deletes it).
+/// Speech models on this Mac (the Android and Windows apps' ModelStore). Downloads go to a primary folder; models are
+/// also found, read only, in shared folders, where Voice Assistant keeps the same models, so they aren't downloaded
+/// twice. A model is one or more files; each download resumes after a dropped connection and is checked against its
+/// pinned SHA-256 before it gets its final name (a mismatch deletes it).
 ///
 /// Verified files are remembered in `indexFileName` in the primary folder (path, size, last-write time and hash), so
 /// making sure a model is intact on every start doesn't read 660 MB again: a file is hashed once, and again only if its
@@ -118,8 +118,8 @@ public final class ModelStore: @unchecked Sendable {
     /// final name once its hash matched. `download(_:progress:)` checks the hashes of files it didn't verify itself.
     public func isInstalled(_ spec: ModelSpec) -> Bool { folderHolding(spec) != nil }
 
-    /// The folder a recognizer loads `spec` from: for a multi-file model, its own folder (".../models/parakeet-tdt-110m").
-    /// If the model isn't installed, where a download puts it.
+    /// The folder a recognizer loads `spec` from: for a multi-file model, its own folder
+    /// (".../models/parakeet-tdt-110m"). If the model isn't installed, where a download puts it.
     public func directoryOf(_ spec: ModelSpec) -> String {
         Files.parent(Self.pathIn(folderHolding(spec) ?? primaryFolder, spec.files[0]))
     }
@@ -129,12 +129,12 @@ public final class ModelStore: @unchecked Sendable {
         spec.files.reduce(0) { $0 + (isInstalled($1) ? $1.bytes : partLength($1)) }
     }
 
-    /// Downloads `spec`'s missing files into the primary folder, one after another. Also the way to make sure an installed
-    /// model is intact before loading it: files already verified are skipped without being read again. Checks the free
-    /// space first, resumes partial downloads ("<file>.part", kept after a cancel or a dropped connection), tries each file
-    /// up to 5 times (2, 4, 6, 8 s apart), and verifies its SHA-256 before giving it its final name. Throws
-    /// `DownloadError` with a message people can read, or `CancellationError` when the task is cancelled or `delete` stops
-    /// the download.
+    /// Downloads `spec`'s missing files into the primary folder, one after another. Also the way to make sure an
+    /// installed model is intact before loading it: files already verified are skipped without being read again. Checks
+    /// the free space first, resumes partial downloads ("<file>.part", kept after a cancel or a dropped connection),
+    /// tries each file up to 5 times (2, 4, 6, 8 s apart), and verifies its SHA-256 before giving it its final name.
+    /// Throws a `DownloadError` with a message people can read, or a `CancellationError` when the task is cancelled or
+    /// `delete` stops the download.
     public func download(_ spec: ModelSpec, progress: ProgressHandler? = nil) async throws {
         try await downloadFiles(spec.id, spec.files, progress)
     }
@@ -144,8 +144,8 @@ public final class ModelStore: @unchecked Sendable {
         try await downloadFiles(file.path, [file], progress)
     }
 
-    /// Deletes `spec`'s files and partial downloads from the primary folder, stopping its download first. Copies in shared
-    /// folders belong to other apps and stay (so the model may still be installed).
+    /// Deletes `spec`'s files and partial downloads from the primary folder, stopping its download first. Copies in
+    /// shared folders belong to other apps and stay (so the model may still be installed).
     public func delete(_ spec: ModelSpec) {
         lock.lock()
         let running = downloads.filter { $0.key == spec.id }
@@ -171,12 +171,11 @@ public final class ModelStore: @unchecked Sendable {
     }
 
     /// Deletes what this version doesn't use from the primary folder: files that aren't a current model file (or its
-    /// partial download), such as models older versions used, then empty folders. Shared folders belong to other apps and
-    /// are never touched, even one inside the primary folder.
+    /// partial download), such as models older versions used, then empty folders. Shared folders belong to other apps
+    /// and are never touched, even one inside the primary folder.
     public func removeLeftovers() {
-        guard Files.isDirectory(primaryFolder), let entries = FileManager.default.enumerator(atPath: primaryFolder) else {
-            return
-        }
+        guard Files.isDirectory(primaryFolder) else { return }
+        guard let entries = FileManager.default.enumerator(atPath: primaryFolder) else { return }
 
         let known = ModelCatalog.knownPaths.flatMap { [$0, $0 + ".part"] } + [Self.indexFileName]
         let keep = Set(known.map { $0.lowercased() })
@@ -454,7 +453,8 @@ public final class ModelStore: @unchecked Sendable {
         defer { lock.unlock() }
         var index = loadedIndex()
         index[Self.key(path)] = Verified(
-            sha256: file.sha256.lowercased(), bytes: info.bytes, writeTicks: info.writeTicks, path: Files.fullPath(path))
+            sha256: file.sha256.lowercased(), bytes: info.bytes, writeTicks: info.writeTicks,
+            path: Files.fullPath(path))
         self.index = index
         saveIndexLocked()
     }
@@ -565,7 +565,7 @@ private final class Download: @unchecked Sendable {
     func waitUntilStopped(timeout: TimeInterval) { _ = running.wait(timeout: .now() + timeout) }
 }
 
-/// One HTTP request for a model file: the bytes go into its partial download as they arrive. A URLSession task delegate.
+/// One HTTP request for a model file: the bytes go into its partial download as they arrive. A URLSession delegate.
 private final class Fetch: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let file: ModelFile
     private let part: String

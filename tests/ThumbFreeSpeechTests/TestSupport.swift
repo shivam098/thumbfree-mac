@@ -3,9 +3,9 @@ import ThumbFreeCore
 import XCTest
 @testable import ThumbFreeSpeech
 
-/// Models for the tests that need one, looked up like the app does (~/Library/Application Support/ThumbFree/models, then
-/// Voice Assistant's folder); THUMBFREE_MODELS points at one folder instead (CI downloads the models there). A test whose
-/// model isn't there is skipped, not failed, so `swift test` passes without downloads.
+/// Models for the tests that need one, looked up like the app does (~/Library/Application Support/ThumbFree/models,
+/// then Voice Assistant's folder); THUMBFREE_MODELS points at one folder instead (CI downloads the models there). A
+/// test whose model isn't there is skipped, not failed, so `swift test` passes without downloads.
 enum TestModels {
     static let store: ModelStore = {
         if let folder = ProcessInfo.processInfo.environment["THUMBFREE_MODELS"], !folder.isEmpty {

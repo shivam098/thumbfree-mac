@@ -28,11 +28,13 @@ let package = Package(
         // Next to the shared test data in tests/vectors and tests/audio (lowercase, as in every ThumbFree repo).
         .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"], path: "tests/ThumbFreeCoreTests"),
         .testTarget(
-            name: "ThumbFreeSpeechTests", dependencies: ["ThumbFreeSpeech", "CSherpaOnnx"], path: "tests/ThumbFreeSpeechTests"),
+            name: "ThumbFreeSpeechTests",
+            dependencies: ["ThumbFreeSpeech", "CSherpaOnnx"],
+            path: "tests/ThumbFreeSpeechTests"),
         .testTarget(name: "ThumbFreeMacTests", dependencies: ["ThumbFreeMac"], path: "tests/ThumbFreeMacTests"),
         // The speech engines as static libraries with their C headers, linked into the app: sherpa-onnx 2.0.1 with
-        // onnxruntime, and whisper.cpp 1.9.5 with ggml (Metal). .github/workflows/engines.yml builds them from the pinned
-        // inputs in scripts/engines; the zips are this repo's release assets.
+        // onnxruntime, and whisper.cpp 1.9.5 with ggml (Metal). .github/workflows/engines.yml builds them from the
+        // pinned inputs in scripts/engines; the zips are this repo's release assets.
         .binaryTarget(
             name: "CSherpaOnnx",
             url: "\(engines)/engines-sherpa-onnx-2.0.1/CSherpaOnnx.xcframework.zip",

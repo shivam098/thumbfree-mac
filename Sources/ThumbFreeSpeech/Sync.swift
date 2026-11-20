@@ -108,7 +108,9 @@ enum Files {
     }
 
     /// `Path.Combine`.
-    static func combine(_ folder: String, _ name: String) -> String { (folder as NSString).appendingPathComponent(name) }
+    static func combine(_ folder: String, _ name: String) -> String {
+        (folder as NSString).appendingPathComponent(name)
+    }
 
     /// `Path.GetDirectoryName`.
     static func parent(_ path: String) -> String { (path as NSString).deletingLastPathComponent }
@@ -136,7 +138,7 @@ enum Files {
         return (Int64(status.st_size), ticks(status.st_mtimespec))
     }
 
-    /// .NET ticks (100 ns since 0001-01-01), the unit of the C# index's times, so the index file is the same on Windows.
+    /// .NET ticks (100 ns since 0001-01-01), the unit of the C# index's times: the index file is the same on Windows.
     static func ticks(_ time: timespec) -> Int64 {
         621_355_968_000_000_000 + Int64(time.tv_sec) * 10_000_000 + Int64(time.tv_nsec) / 100
     }

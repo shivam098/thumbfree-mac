@@ -46,10 +46,10 @@ jobs:
           key: speech-models-v1-${{ hashFiles('Sources/ThumbFreeCore/Models.swift') }}
 
       - name: Speech models (download)
-        if: steps.speech-models.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          # The files come from ModelCatalog itself (Models.swift needs nothing else), each checked against its SHA-256.
+          # The files come from ModelCatalog itself (the core library, built on its own). A file the cache didn't
+          # restore is downloaded and checked against its SHA-256.
           list="$RUNNER_TEMP/speech-models"
           mkdir -p "$list"
           cat > "$list/main.swift" <<'EOF'
@@ -58,8 +58,13 @@ jobs:
               print(file.path, file.url, file.sha256, file.bytes)
           }
           EOF
-          swiftc Sources/ThumbFreeCore/Models.swift "$list/main.swift" -o "$list/list-models"
+          swiftc Sources/ThumbFreeCore/*.swift "$list/main.swift" -o "$list/list-models"
           "$list/list-models" | while read -r path url sha256 bytes; do
+            if [ -f "models/$path" ] && [ "$(stat -f %z "models/$path")" = "$bytes" ]; then
+              echo "$path: $bytes bytes, from the cache"
+              continue
+            fi
+
             mkdir -p "models/$(dirname "$path")"
             curl --fail --location --silent --show-error --retry 5 --retry-all-errors --output "models/$path" "$url"
             if ! echo "$sha256  models/$path" | shasum -a 256 --check --status; then

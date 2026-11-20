@@ -268,7 +268,8 @@ final class ModelStoreTests: XCTestCase {
             try Data("x".utf8).write(to: URL(fileURLWithPath: file))
         }
 
-        try FileManager.default.createDirectory(atPath: scratch.file("models/empty/inner"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            atPath: scratch.file("models/empty/inner"), withIntermediateDirectories: true)
         let inside = try sharedFolder("models/voice-assistant")
         let alongside = try sharedFolder("voice-dictation")
         let before = try snapshot(inside, alongside)
@@ -374,14 +375,15 @@ final class ModelStoreTests: XCTestCase {
         return lines.sorted { $0.lowercased() < $1.lowercased() }
     }
 
-    /// Another app's models folder: `files`, an old model and a partial download ThumbFree doesn't use, an empty folder,
-    /// all dated a year ago (so any write shows).
+    /// Another app's models folder: `files`, an old model and a partial download ThumbFree doesn't use, an empty
+    /// folder, all dated a year ago (so any write shows).
     private func sharedFolder(_ relative: String, _ files: (String, Data)...) throws -> String {
         let folder = scratch.file(relative)
         let old = (folder as NSString).appendingPathComponent("old")
         try FileManager.default.createDirectory(atPath: old, withIntermediateDirectories: true)
         let unused = [
-            ("ggml-small.en-q8_0.bin", randomBytes(98, 1_000)), ("ggml-small.en-q8_0.bin.partial", randomBytes(99, 500)),
+            ("ggml-small.en-q8_0.bin", randomBytes(98, 1_000)),
+            ("ggml-small.en-q8_0.bin.partial", randomBytes(99, 500)),
         ]
         for (name, bytes) in files + unused {
             try bytes.write(to: URL(fileURLWithPath: (folder as NSString).appendingPathComponent(name)))

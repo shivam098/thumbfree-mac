@@ -30,9 +30,9 @@ public struct TranscriptionResult: Equatable, Sendable {
     public let elapsed: TimeInterval
 }
 
-/// OpenAI Whisper through whisper.cpp (with Metal), the engine for Hindi + English. Usable directly (`transcribeResult`)
-/// or as a `Recognizer` like the sherpa-onnx engines. Set up as Windows sets it up through Whisper.net: English, greedy,
-/// no context from earlier calls, one segment, a fresh decoding state for each call.
+/// OpenAI Whisper through whisper.cpp (with Metal), the engine for Hindi + English. Usable directly
+/// (`transcribeResult`) or as a `Recognizer` like the sherpa-onnx engines. Set up as Windows sets it up through
+/// Whisper.net: English, greedy, no context from earlier calls, one segment, a fresh decoding state for each call.
 public final class WhisperRecognizer: Recognizer, @unchecked Sendable {
     public static let sampleRate = 16000
 
@@ -82,9 +82,9 @@ public final class WhisperRecognizer: Recognizer, @unchecked Sendable {
         return try run(samples, prompt: Self.isBlank(options.prompt) ? nil : options.prompt)
     }
 
-    /// Runs to the end once started, as on Windows (Whisper.net keeps running natively after a cancel): `abort` throws the
-    /// result away instead. A `prompt` other than the options' prompt is used for this call. `preview` is ignored: the
-    /// audio context is fixed when the recognizer is made.
+    /// Runs to the end once started, as on Windows (Whisper.net keeps running natively after a cancel): `abort` throws
+    /// the result away instead. A `prompt` other than the options' prompt is used for this call. `preview` is ignored:
+    /// the audio context is fixed when the recognizer is made.
     public func transcribe(_ samples16k: [Float], preview: Bool, prompt: String?) throws -> String? {
         if aborted.isSet {
             return nil

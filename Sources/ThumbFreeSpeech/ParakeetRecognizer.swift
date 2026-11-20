@@ -2,9 +2,9 @@ import CSherpaOnnx
 import Foundation
 import ThumbFreeCore
 
-/// NVIDIA Parakeet TDT through sherpa-onnx (the Android app's ParakeetRecognizer). Greedy decoding; the output already has
-/// punctuation and capitals. A decode can't be interrupted, but it takes a fraction of the audio's length, and an aborted
-/// result is thrown away.
+/// NVIDIA Parakeet TDT through sherpa-onnx (the Android app's ParakeetRecognizer). Greedy decoding; the output already
+/// has punctuation and capitals. A decode can't be interrupted, but it takes a fraction of the audio's length, and an
+/// aborted result is thrown away.
 public final class ParakeetRecognizer: Recognizer, @unchecked Sendable {
     private let recognizer: OpaquePointer
     private let gate = NSLock()

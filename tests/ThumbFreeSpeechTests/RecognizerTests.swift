@@ -18,7 +18,7 @@ final class RecognizerTests: XCTestCase {
         XCTAssertFalse(Sherpa.onnxruntimeVersion.isEmpty)
         XCTAssertEqual(WhisperRecognizer.version, "1.9.5")
 
-        // Linked into this binary: no onnxruntime or sherpa-onnx library is loaded from anywhere else (Homebrew's, say).
+        // Linked into this binary: no onnxruntime or sherpa-onnx library comes from anywhere else (Homebrew's, say).
         let images = (0..<_dyld_image_count()).compactMap { _dyld_get_image_name($0).map { String(cString: $0) } }
         XCTAssertFalse(images.isEmpty)
         let engines = images.filter { $0.lowercased().contains("onnxruntime") || $0.lowercased().contains("sherpa") }
@@ -44,7 +44,8 @@ final class RecognizerTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         for file in spec.files {
             let source = try XCTUnwrap(TestModels.store.pathOf(file))
-            try FileManager.default.copyItem(atPath: source, toPath: (folder as NSString).appendingPathComponent(file.name))
+            let copy = (folder as NSString).appendingPathComponent(file.name)
+            try FileManager.default.copyItem(atPath: source, toPath: copy)
         }
 
         let model = try ParakeetRecognizer.load(folder, threads: 2)
@@ -167,12 +168,14 @@ final class RecognizerTests: XCTestCase {
         let model = try StreamingRecognizer.load(TestModels.store.directoryOf(spec), threads: TestModels.threads)
         defer { model.close() }
         let clips = [
-            ("send-logs.wav", "latest build logs"), ("genres.wav", "different genres"), ("dictation.wav", "push the build"),
+            ("send-logs.wav", "latest build logs"),
+            ("genres.wav", "different genres"),
+            ("dictation.wav", "push the build"),
         ]
         for (clip, lastWords) in clips {
             // The clips end with about 0.75 s of silence: cutting 0.7 s is a tap to finish right after the last word.
-            // Silence in front moves that end to other places in Kroko's 1.28 s windows, where different amounts of tail
-            // are needed.
+            // Silence in front moves that end to other places in Kroko's 1.28 s windows, where different amounts of
+            // tail are needed.
             let full = try Audio.read(clip)
             let speech = Array(full.dropLast(Decoding.sampleRate * 7 / 10))
             for lead in [0, 400, 800] {
@@ -198,9 +201,9 @@ final class RecognizerTests: XCTestCase {
         let model = try StreamingRecognizer.load(TestModels.store.directoryOf(spec), threads: TestModels.threads)
         defer { model.close() }
 
-        // Phrases as Kroko writes them (its vocabulary has . , ? ! : ; and ...). The punctuation model hardly ever ends a
-        // phrase with a mark itself; given Kroko's marks, it repeats them, sometimes twice ("build..", "logs.,"), and adds
-        // stray commas ("build, logs.").
+        // Phrases as Kroko writes them (its vocabulary has . , ? ! : ; and ...). The punctuation model hardly ever ends
+        // a phrase with a mark itself; given Kroko's marks, it repeats them, sometimes twice ("build..", "logs.,"), and
+        // adds stray commas ("build, logs.").
         let question = model.punctuate("is it ready?")
         let dictation = model.punctuate(
             "so um I wanted to check the pull request comma and then I'm merge it into main full stop new line after "
@@ -330,7 +333,7 @@ final class RecognizerTests: XCTestCase {
 
     func testSileroFindsTheSpeechAndThePauseBetweenTwoClips() throws {
         let path = try TestModels.require(ModelCatalog.vad)
-        let detector = try SpeechDetector(modelPath: path)
+        let detector = try timed("silero load") { try SpeechDetector(modelPath: path) }
         defer { detector.close() }
 
         let logs = try Audio.read("send-logs.wav")
@@ -339,7 +342,8 @@ final class RecognizerTests: XCTestCase {
         print("send-logs: \(regions)")
         XCTAssertFalse(regions.isEmpty)
         XCTAssertEqual(regions, regions.sorted { $0.start < $1.start })
-        XCTAssertTrue(regions.allSatisfy { $0.start >= 0 && $0.start < $0.end && $0.end <= seconds + 0.05 }, "\(regions)")
+        let inside = regions.allSatisfy { $0.start >= 0 && $0.start < $0.end && $0.end <= seconds + 0.05 }
+        XCTAssertTrue(inside, "\(regions)")
 
         // 1.5 s of silence between two clips is a pause: speech on both sides of it, none in it.
         let both = try detector.detect(logs + Audio.silence(ms: 1500) + Audio.read("genres.wav"))

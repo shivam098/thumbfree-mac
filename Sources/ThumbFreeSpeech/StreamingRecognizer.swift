@@ -3,8 +3,8 @@ import Foundation
 import ThumbFreeCore
 
 /// A streaming model (Kroko Zipformer) through sherpa-onnx's online recognizer, for live typing (the Android app's
-/// StreamingRecognizer): audio goes in as it's recorded and the text so far comes straight back. A phrase ends at a short
-/// pause; each finished phrase gets punctuation from a small model, keeping the recognizer's own words and capitals.
+/// StreamingRecognizer): audio goes in as it's recorded and the text so far comes straight back. A phrase ends at a
+/// short pause; each finished phrase gets punctuation from a small model, keeping the recognizer's words and capitals.
 public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
     /// 100 ms: how much audio `transcribe` feeds at a time, as the app does while recording.
     public static let chunkSamples = Decoding.sampleRate / 10
@@ -55,7 +55,9 @@ public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
             config.model_config.transducer.decoder = text(paths[1])
             config.model_config.transducer.joiner = text(paths[2])
             config.model_config.tokens = text(paths[3])
-            config.model_config.num_threads = Int32(min(threads, 2)) // two threads already run ~10x faster than you speak
+
+            // Two threads already run ~10x faster than you speak.
+            config.model_config.num_threads = Int32(min(threads, 2))
             config.model_config.provider = text("cpu")
 
             // A phrase ends after 0.8 s of silence (punctuation is added then). As on Android: rule 1 (2.4 s of silence
@@ -142,10 +144,11 @@ public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
     }
 
     /// Punctuation from the small model, merged into the recognizer's words and capitals (`LiveText.mergePunctuation`).
-    /// Kroko writes a few marks itself ("is it ready?", "push the build."). The model gets the bare words: given Kroko's
-    /// marks it repeats them, sometimes twice ("build..", "logs.,"), and adds stray commas ("build, logs."). Kroko's marks
-    /// are then put back where it wrote them, since the model hardly ever ends a phrase with one (a question would lose
-    /// its "?"), and each word keeps one mark. Best effort: the phrase is kept as recognized if anything goes wrong.
+    /// Kroko writes a few marks itself ("is it ready?", "push the build."). The model gets the bare words: given
+    /// Kroko's marks it repeats them, sometimes twice ("build..", "logs.,"), and adds stray commas ("build, logs.").
+    /// Kroko's marks are then put back where it wrote them, since the model hardly ever ends a phrase with one (a
+    /// question would lose its "?"), and each word keeps one mark. Best effort: the phrase is kept as recognized if
+    /// anything goes wrong.
     func punctuate(_ text: String) -> String {
         gate.lock()
         defer { gate.unlock() }
@@ -263,11 +266,11 @@ public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
         /// Flushes the last words and returns every phrase of the dictation, punctuated and in order: the app types the
         /// ones it hasn't typed yet. The session can't be used afterwards; calling it again returns the same phrases.
         ///
-        /// sherpa-onnx only decodes whole windows (Kroko: 1.41 s of audio, moving on 1.28 s at a time), so the last words
-        /// of a dictation finished right after speaking wait for audio after them. Silence goes in 100 ms at a time until
-        /// two windows past the end are decoded, which covers every recorded frame, and at least 1 s of it, for models
-        /// with shorter windows. For Kroko that's 1.3–2.7 s of silence and two decodes (about 0.1 s); a fixed 1 s lost the
-        /// last words at a third of the alignments tested.
+        /// sherpa-onnx only decodes whole windows (Kroko: 1.41 s of audio, moving on 1.28 s at a time), so the last
+        /// words of a dictation finished right after speaking wait for audio after them. Silence goes in 100 ms at a
+        /// time until two windows past the end are decoded, which covers every recorded frame, and at least 1 s of it,
+        /// for models with shorter windows. For Kroko that's 1.3–2.7 s of silence and two decodes (about 0.1 s); a
+        /// fixed 1 s lost the last words at a third of the alignments tested.
         @discardableResult
         public func finish() -> [String] {
             owner.gate.lock()
@@ -297,8 +300,8 @@ public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
             return finishedPhrases
         }
 
-        /// `finish` as one text that ends like a sentence (the Android app's finish()): the last phrase, cut at a pause,
-        /// may end in a comma, which becomes a full stop.
+        /// `finish` as one text that ends like a sentence (the Android app's finish()): the last phrase, cut at a
+        /// pause, may end in a comma, which becomes a full stop.
         public func finishText() -> String {
             LiveText.endSentence(LiveText.join(finish(), ""))
         }
@@ -325,7 +328,8 @@ public final class StreamingRecognizer: Recognizer, @unchecked Sendable {
         private func acceptLocked(_ samples: [Float]) -> Int {
             if !samples.isEmpty {
                 samples.withUnsafeBufferPointer {
-                    SherpaOnnxOnlineStreamAcceptWaveform(stream, Int32(Decoding.sampleRate), $0.baseAddress, Int32($0.count))
+                    let count = Int32($0.count)
+                    SherpaOnnxOnlineStreamAcceptWaveform(stream, Int32(Decoding.sampleRate), $0.baseAddress, count)
                 }
             }
 

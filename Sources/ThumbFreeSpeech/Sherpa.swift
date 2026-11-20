@@ -12,9 +12,9 @@ enum Sherpa {
         }
     }
 
-    /// The path as sherpa-onnx gets it. Windows passes an 8.3 short name for a path outside the system code page (the C#
-    /// wrapper marshals paths as ANSI); the C API takes UTF-8 and so does the Mac's file system, so here it's the full
-    /// path, as on every system but Windows.
+    /// The path as sherpa-onnx gets it. Windows passes an 8.3 short name for a path outside the system code page (the
+    /// C# wrapper marshals paths as ANSI); the C API takes UTF-8 and so does the Mac's file system, so here it's the
+    /// full path, as on every system but Windows.
     static func nativePath(_ path: String) -> String { Files.fullPath(path) }
 
     /// sherpa-onnx returns NULL for a configuration it rejects (and logs to stderr, which nobody sees); using it would

@@ -12,8 +12,8 @@ public struct SpeechRegion: Equatable, Sendable {
     }
 }
 
-/// Neural voice activity detection (Silero, via whisper.cpp). Distinguishes speech from music and noise, which an energy
-/// threshold cannot do. Used to drop non-speech utterances and to split utterances that background sound merged together.
+/// Neural voice activity detection (Silero, via whisper.cpp). Distinguishes speech from music and noise, which an
+/// energy threshold cannot do. Used to drop non-speech utterances and to split ones background sound merged together.
 public final class SpeechDetector: @unchecked Sendable {
     private let context: OpaquePointer
     private let params: whisper_vad_params

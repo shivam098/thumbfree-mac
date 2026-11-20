@@ -177,21 +177,37 @@ final class FnTapKeysTests: XCTestCase {
         XCTAssertEqual([nil, .start], tap(&keys))
     }
 
-    /// Secure Input hides the other key of Fn+↑ or Fn+Delete in a password field, so it looks like a tap.
-    func testUnderSecureInputAPressNeverStartsButStillFinishes() {
+    /// Secure Input hides the other key of Fn+↑ or Fn+Delete in a password field, so it looks like a tap: it starts
+    /// nothing and says why.
+    func testUnderSecureInputAPressNeverStartsSaysWhyAndStillFinishes() {
         var keys = FnTapKeys()
         for (atPress, atRelease) in [(true, true), (true, false), (false, true)] {
-            XCTAssertNil(keys.process(.fn, down: true, secureInput: atPress).command)
-            XCTAssertNil(keys.process(.fn, down: false, secureInput: atRelease).command)
+            XCTAssertEqual(FnTapKeys.Result(), keys.process(.fn, down: true, secureInput: atPress))
+            XCTAssertEqual(
+                FnTapKeys.Result(blocked: .secureInput), keys.process(.fn, down: false, secureInput: atRelease))
         }
         XCTAssertFalse(keys.isRecording)
 
         // Already recording: stopping the microphone is always safe.
         XCTAssertEqual([nil, .start], tap(&keys))
         XCTAssertNil(keys.process(.fn, down: true, secureInput: true).command)
-        XCTAssertEqual(.finish, keys.process(.fn, down: false, secureInput: true).command)
+        XCTAssertEqual(FnTapKeys.Result(.finish), keys.process(.fn, down: false, secureInput: true))
         XCTAssertFalse(keys.isRecording)
         XCTAssertEqual([nil, .start], tap(&keys))
+    }
+
+    /// A shortcut whose other key still shows (a modifier, a click) is only a shortcut, and a recording that started
+    /// some other way while the key was down wouldn't start anyway: neither says it was blocked.
+    func testOnlyWhatLooksLikeATapSaysItWasBlocked() {
+        var keys = FnTapKeys()
+        _ = keys.process(.fn, down: true, secureInput: true)
+        _ = keys.process(.other, down: true)
+        XCTAssertEqual(FnTapKeys.Result(), keys.process(.fn, down: false, secureInput: true))
+
+        _ = keys.process(.fn, down: true, secureInput: true)
+        keys.isRecording = true
+        XCTAssertEqual(FnTapKeys.Result(), keys.process(.fn, down: false, secureInput: true))
+        XCTAssertTrue(keys.isRecording)
     }
 
     /// A user switch mid-press, or another tap keeping the release: modifier keys don't repeat, so the next press of

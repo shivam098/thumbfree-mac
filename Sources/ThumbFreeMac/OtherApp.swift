@@ -117,18 +117,19 @@ extension OtherApp {
         public func observe(_ handler: @escaping @MainActor @Sendable (OtherApp.Change, String?, pid_t) -> Void) {
             stopObserving()
             observation = NSWorkspace.shared.observe(\.runningApplications, options: [.old, .new]) { _, change in
-                // Apps that launched come as new values, apps that quit as old ones, and a whole new list as both.
-                let before = SystemWorkspace.apps(change.oldValue)
-                let after = SystemWorkspace.apps(change.newValue)
-                let launched = after.subtracting(before).map { (OtherApp.Change.launched, $0) }
-                let quit = before.subtracting(after).map { (OtherApp.Change.quit, $0) }
-                let changes = launched + quit
-                guard !changes.isEmpty else { return }
+                let (launched, quit) = SystemWorkspace.difference(
+                    old: change.oldValue.map(SystemWorkspace.apps), new: change.newValue.map(SystemWorkspace.apps))
+                guard !launched.isEmpty || !quit.isEmpty else { return }
                 // The list changes on the main run loop; the handler runs on the main thread in any case.
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        for (kind, app) in changes {
-                            handler(kind, app.bundleIdentifier, app.processIdentifier)
+                        // Launches first, so an app replaced by a new copy in one change never reads as gone.
+                        for app in launched {
+                            handler(.launched, app.bundleIdentifier, app.processIdentifier)
+                        }
+
+                        for app in quit {
+                            handler(.quit, app.bundleIdentifier, app.processIdentifier)
                         }
                     }
                 }
@@ -141,15 +142,24 @@ extension OtherApp {
         }
 
         /// A running app, as far as OtherApp cares.
-        private struct App: Hashable, Sendable {
+        struct App: Hashable, Sendable {
             let bundleIdentifier: String?
             let processIdentifier: pid_t
         }
 
-        private static func apps(_ list: [NSRunningApplication]?) -> Set<App> {
-            Set((list ?? []).map { app in
+        /// The apps that launched and quit in one change of the list of running apps, from its old and new values. Apps
+        /// that launched come as an insertion (only new values), apps that quit as a removal (only old values), and a
+        /// whole new list as both.
+        static func difference(old: [App]?, new: [App]?) -> (launched: Set<App>, quit: Set<App>) {
+            let before = Set(old ?? [])
+            let after = Set(new ?? [])
+            return (after.subtracting(before), before.subtracting(after))
+        }
+
+        private static func apps(_ list: [NSRunningApplication]) -> [App] {
+            list.map { app in
                 App(bundleIdentifier: app.bundleIdentifier, processIdentifier: app.processIdentifier)
-            })
+            }
         }
     }
 }

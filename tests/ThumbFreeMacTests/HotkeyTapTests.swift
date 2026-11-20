@@ -86,6 +86,7 @@ final class HotkeyTapTests: XCTestCase {
     @MainActor
     private final class Commands {
         var list: [FnTapKeys.Command] = []
+        var blocked: [FnTapKeys.Blocker] = []
         var onMainThread = true
     }
 
@@ -111,6 +112,10 @@ final class HotkeyTapTests: XCTestCase {
         let commands = Commands()
         tap.onCommand = { command in
             commands.list.append(command)
+            commands.onMainThread = commands.onMainThread && Thread.isMainThread
+        }
+        tap.onBlocked = { blocker in
+            commands.blocked.append(blocker)
             commands.onMainThread = commands.onMainThread && Thread.isMainThread
         }
         tap.start()
@@ -233,6 +238,22 @@ final class HotkeyTapTests: XCTestCase {
         XCTAssertFalse(tap.isRecording)
     }
 
+    /// Fn+Esc while recording, with the Fn flag on the Esc as macOS sends it while Fn is held: a shortcut, so it
+    /// neither cancels nor finishes.
+    @MainActor
+    func testFnEscWhileRecordingIsAShortcut() {
+        let source = FakeFnEventSource()
+        let (tap, commands) = makeTap(source)
+
+        source.send([fnDown, fnUp, fnDown])
+        XCTAssertFalse(source.send(HotkeyEvent(.keyDown, keyCode: 53, flags: .maskSecondaryFn)))
+        source.send(fnUp)
+        drainMainQueue()
+
+        XCTAssertEqual([.start], commands.list)
+        XCTAssertTrue(tap.isRecording)
+    }
+
     @MainActor
     func testKeysThisAppPostsAreIgnored() {
         let source = FakeFnEventSource()
@@ -324,7 +345,7 @@ final class HotkeyTapTests: XCTestCase {
     }
 
     @MainActor
-    func testUnderSecureInputFnNeverStartsDictationButStillFinishesIt() {
+    func testUnderSecureInputFnNeverStartsDictationSaysWhyAndStillFinishesIt() {
         let source = FakeFnEventSource()
         let secure = FakeSecureInput()
         let (tap, commands) = makeTap(source, secureInput: secure)
@@ -337,8 +358,11 @@ final class HotkeyTapTests: XCTestCase {
         source.send([fnUp, fnDown])
         secure.isOn = true
         source.send(fnUp)
+        // A shortcut it doesn't hide, such as Fn-click, is only a shortcut.
+        source.send([fnDown, HotkeyEvent(.mouseDown), fnUp])
         drainMainQueue()
         XCTAssertEqual([], commands.list)
+        XCTAssertEqual([.secureInput, .secureInput, .secureInput], commands.blocked)
         XCTAssertFalse(tap.isRecording)
 
         secure.isOn = false
@@ -347,11 +371,34 @@ final class HotkeyTapTests: XCTestCase {
         source.send([fnDown, fnUp])
         drainMainQueue()
         XCTAssertEqual([.start, .finish], commands.list)
+        XCTAssertEqual(3, commands.blocked.count)
 
         // It's asked only when Fn goes down or up.
-        XCTAssertEqual(10, secure.asked)
+        XCTAssertEqual(12, secure.asked)
         source.send([arrowKey(down: true), arrowKey(down: false), escDown, HotkeyEvent(.scroll), rightOptionDown])
-        XCTAssertEqual(10, secure.asked)
+        XCTAssertEqual(12, secure.asked)
+    }
+
+    /// The pill can say why Fn did nothing: Secure Input left on by an app in the background stops every tap.
+    @MainActor
+    func testABlockedStartReachesTheHostOnTheMainThread() {
+        let source = FakeFnEventSource()
+        let secure = FakeSecureInput()
+        secure.isOn = true
+        let (tap, commands) = makeTap(source, secureInput: secure)
+
+        let sent = expectation(description: "keys sent from the tap's thread")
+        DispatchQueue.global().async {
+            source.send([fnDown, fnUp])
+            sent.fulfill()
+        }
+        wait(for: [sent], timeout: 2)
+        drainMainQueue()
+
+        XCTAssertEqual([.secureInput], commands.blocked)
+        XCTAssertTrue(commands.onMainThread)
+        XCTAssertEqual([], commands.list)
+        XCTAssertFalse(tap.isRecording)
     }
 
     @MainActor

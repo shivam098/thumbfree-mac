@@ -6,7 +6,7 @@
 /// The key pressed together with another key, a modifier, a mouse button or the scroll wheel is a macOS shortcut
 /// (Fn+arrows, Fn+Delete, Fn+F-keys, Fn+E for emoji, Option+letters, Option-click, Option-drag, Option-scroll): it
 /// starts nothing, and while recording it neither finishes nor cancels. Under Secure Input the other keys are hidden,
-/// so a press there never starts dictation (see `process`), and Esc can't cancel.
+/// so a press there never starts dictation but says why (see `process`), and Esc can't cancel.
 ///
 /// The port of thumbfree-windows `TapToDictateKeys` (Ctrl+Win), with one change: Windows starts as soon as the keys go
 /// down, so the first words aren't lost, and cancels when they turn out to be a shortcut. Fn and Option are in everyday
@@ -40,15 +40,24 @@ public struct FnTapKeys: Sendable {
         case cancel
     }
 
+    /// What kept a tap of the key from starting dictation, so the host can say why nothing happened.
+    public enum Blocker: Equatable, Sendable {
+        /// Secure Input was on, so the tap may have been a shortcut whose other key macOS hid (see `process`).
+        case secureInput
+    }
+
     public struct Result: Equatable, Sendable {
         /// What dictation should do; nil for nothing.
         public var command: Command?
         /// True when the key must not reach the focused app: the Esc that cancels.
         public var swallow: Bool
+        /// What kept what looked like a tap from starting dictation; nil when nothing did.
+        public var blocked: Blocker?
 
-        public init(_ command: Command? = nil, swallow: Bool = false) {
+        public init(_ command: Command? = nil, swallow: Bool = false, blocked: Blocker? = nil) {
             self.command = command
             self.swallow = swallow
+            self.blocked = blocked
         }
     }
 
@@ -86,9 +95,11 @@ public struct FnTapKeys: Sendable {
     ///   - key: The key that went down or up.
     ///   - down: True when it went down, false when it went up.
     ///   - secureInput: Secure Event Input is on (a password field, Terminal's Secure Keyboard Entry, a password
-    ///     manager, the lock screen). macOS then hides key-downs from event taps but not modifier keys, so a press of
-    ///     the tap key can't be told from a shortcut (Fn+↑, Fn+Delete, Option+letter). On when the key goes down or
-    ///     when it's let go, the press never starts dictation; it still finishes one, which is always safe.
+    ///     manager, the lock screen), which any app can leave on, even in the background. macOS then hides key-downs
+    ///     from event taps but not modifier keys, so a press of the tap key can't be told from a shortcut (Fn+↑,
+    ///     Fn+Delete, Option+letter). On when the key goes down or when it's let go, the press never starts dictation;
+    ///     it still finishes one, which is always safe. What would have started gives `blocked: .secureInput`
+    ///     instead, and so does a shortcut hidden this way, since it can't be told from a tap.
     public mutating func process(_ key: Key, down: Bool, secureInput: Bool = false) -> Result {
         if isTapKey(key) {
             return down ? press(secureInput: secureInput) : release(secureInput: secureInput)
@@ -141,10 +152,10 @@ public struct FnTapKeys: Sendable {
             return Result(.finish)
         }
 
-        // Under Secure Input the other keys of a shortcut are hidden, so this may not have been a tap.
-        guard !secureAtPress, !secureInput else { return Result() }
         // A recording that started some other way while the key was down isn't started twice.
         guard !isRecording else { return Result() }
+        // Under Secure Input the other keys of a shortcut are hidden, so this may not have been a tap.
+        guard !secureAtPress, !secureInput else { return Result(blocked: .secureInput) }
         isRecording = true
         return Result(.start)
     }

@@ -144,4 +144,37 @@ final class OtherAppTests: XCTestCase {
         other.start()
         XCTAssertTrue(other.isRunning)
     }
+
+    private func app(_ bundleIdentifier: String?, _ processIdentifier: pid_t) -> OtherApp.SystemWorkspace.App {
+        OtherApp.SystemWorkspace.App(bundleIdentifier: bundleIdentifier, processIdentifier: processIdentifier)
+    }
+
+    /// An app launching comes as an insertion into NSWorkspace's list of running apps: new values only.
+    func testAnInsertionIntoTheRunningAppsIsALaunch() {
+        let difference = OtherApp.SystemWorkspace.difference(old: nil, new: [app(jarvis, 900), app(nil, 901)])
+
+        XCTAssertEqual([app(jarvis, 900), app(nil, 901)], difference.launched)
+        XCTAssertEqual([], difference.quit)
+    }
+
+    /// An app quitting comes as a removal: old values only.
+    func testARemovalFromTheRunningAppsIsAQuit() {
+        let difference = OtherApp.SystemWorkspace.difference(old: [app(jarvis, 900)], new: nil)
+
+        XCTAssertEqual([], difference.launched)
+        XCTAssertEqual([app(jarvis, 900)], difference.quit)
+    }
+
+    /// A whole new list: what's only in the new one launched and what's only in the old one quit, so a new copy of
+    /// an app with the same bundle identifier is both.
+    func testANewListOfRunningAppsGivesBothLaunchesAndQuits() {
+        let old = [app(jarvis, 900), app("com.apple.Safari", 901), app(nil, 902)]
+        let new = [app("com.apple.Safari", 901), app(nil, 902), app(jarvis, 903), app(thumbFree, 904)]
+        let difference = OtherApp.SystemWorkspace.difference(old: old, new: new)
+
+        XCTAssertEqual([app(jarvis, 903), app(thumbFree, 904)], difference.launched)
+        XCTAssertEqual([app(jarvis, 900)], difference.quit)
+        let unchanged = OtherApp.SystemWorkspace.difference(old: old, new: old)
+        XCTAssertTrue(unchanged.launched.isEmpty && unchanged.quit.isEmpty)
+    }
 }

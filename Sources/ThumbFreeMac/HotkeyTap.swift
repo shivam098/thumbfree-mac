@@ -18,9 +18,9 @@ import Foundation
 /// so a busy main thread never holds up anyone's typing, and it never keeps any other event. It doesn't ask for either
 /// permission (Permissions does).
 ///
-/// Secure Input (a password field, Terminal's Secure Keyboard Entry, a password manager, the lock screen) hides
-/// key-downs from every event tap but not modifier keys, so a press of the tap key there never starts dictation; see
-/// `FnTapKeys.process`.
+/// Secure Input (a password field, Terminal's Secure Keyboard Entry, a password manager, the lock screen, or an app
+/// that leaves it on in the background) hides key-downs from every event tap but not modifier keys, so a press of the
+/// tap key there never starts dictation, and `onBlocked` says why; see `FnTapKeys.process`.
 @MainActor
 public final class HotkeyTap {
     /// How the tap sees the keys.
@@ -41,6 +41,15 @@ public final class HotkeyTap {
     public var onCommand: (@MainActor (FnTapKeys.Command) -> Void)? {
         get { core.onCommand }
         set { core.onCommand = newValue }
+    }
+
+    /// Runs on the main thread when what looked like a tap didn't start dictation, with what kept it from starting,
+    /// so the host can say why nothing happened ("Secure Input is on, so dictation can't start"). A shortcut that
+    /// Secure Input hid, such as Fn+Delete in a password field, gives the same, so the notice should be brief. It
+    /// comes in order with the commands.
+    public var onBlocked: (@MainActor (FnTapKeys.Blocker) -> Void)? {
+        get { core.onBlocked }
+        set { core.onBlocked = newValue }
     }
 
     /// Whether the keys treat dictation as recording (the next tap finishes it, Esc cancels it). The keys update it
@@ -232,15 +241,16 @@ extension HotkeyTap {
 }
 
 extension HotkeyTap {
-    /// FnTapKeys behind a lock: events arrive on the tap's thread, while the setting, `isRecording` and the handler
-    /// are set on the main thread. Commands go to the main queue in the order they happen.
+    /// FnTapKeys behind a lock: events arrive on the tap's thread, while the setting, `isRecording` and the handlers
+    /// are set on the main thread. Commands and blocked starts go to the main queue in the order they happen.
     final class Core: @unchecked Sendable {
         private let lock = NSLock()
         private let secureInput: @Sendable () -> Bool
         private var keys: FnTapKeys
         private var enabled = true
         private var swallowing = false
-        private var handler: (@MainActor (FnTapKeys.Command) -> Void)?
+        private var commandHandler: (@MainActor (FnTapKeys.Command) -> Void)?
+        private var blockedHandler: (@MainActor (FnTapKeys.Blocker) -> Void)?
 
         init(tapKey: FnTapKeys.TapKey, secureInput: @escaping @Sendable () -> Bool) {
             keys = FnTapKeys(tapKey: tapKey)
@@ -248,8 +258,13 @@ extension HotkeyTap {
         }
 
         var onCommand: (@MainActor (FnTapKeys.Command) -> Void)? {
-            get { locked { handler } }
-            set { locked { handler = newValue } }
+            get { locked { commandHandler } }
+            set { locked { commandHandler = newValue } }
+        }
+
+        var onBlocked: (@MainActor (FnTapKeys.Blocker) -> Void)? {
+            get { locked { blockedHandler } }
+            set { locked { blockedHandler = newValue } }
         }
 
         var isRecording: Bool {
@@ -299,11 +314,17 @@ extension HotkeyTap {
                 return processed
             }
 
-            if let command = result.command {
+            let command = result.command
+            let blocked = result.blocked
+            if command != nil || blocked != nil {
                 DispatchQueue.main.async { [self] in
                     MainActor.assumeIsolated {
-                        if let onCommand = self.onCommand {
+                        if let command, let onCommand = self.onCommand {
                             onCommand(command)
+                        }
+
+                        if let blocked, let onBlocked = self.onBlocked {
+                            onBlocked(blocked)
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-/// Where dictated text is going, for `Layout`.
+/// Where dictated text is going, for `DictationLayout`.
 public struct LayoutContext: Equatable, Sendable {
     /// The field accepts line breaks (lists and emails need them).
     public var multiLine: Bool
@@ -20,8 +20,9 @@ public struct LayoutContext: Equatable, Sendable {
 /// spoken list becomes a bulleted or numbered list, and a corrected time or day keeps only the correction ("Friday at 3
 /// pm… actually 4 pm" → "Friday at 4 pm"). Runs after `DictationFormatter`; conservative by design, so ordinary
 /// sentences come back unchanged. Same rules as the Android and Windows apps, held together by
-/// tests/vectors/layout.tsv.
-public enum Layout {
+/// tests/vectors/layout.tsv. C#'s `Layout`: SwiftUI has a `Layout` protocol, which the name would clash with in any
+/// file that imports both.
+public enum DictationLayout {
     private static let greetings = "hi|hello|hey|dear|good morning|good afternoon|good evening|greetings"
 
     // A name may carry an apostrophe, a full stop or a hyphen ("O'Neil", "St.", "Mary-Ann").

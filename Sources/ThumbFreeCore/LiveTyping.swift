@@ -11,7 +11,7 @@ public struct LiveTypingContext: Equatable, Sendable {
     /// Type finished phrases while speaking (the Live typing switch); false types everything at the end.
     public var live: Bool
 
-    /// Emails, lists and corrections (`Layout`).
+    /// Emails, lists and corrections (`DictationLayout`).
     public var smartFormatting: Bool
 
     public init(textBefore: String?, field: FieldInfo, live: Bool, smartFormatting: Bool) {
@@ -164,7 +164,7 @@ public final class LiveTyping {
             let continues = Insertion.continuesSentence(textBefore)
             let start = formatter.format(said, continuesSentence: continues, searchField: context.field.search)
             let layout = LayoutContext(multiLine: true, atStart: Self.atStart(textBefore), email: context.field.email)
-            layoutHold = !start.isEmpty && context.field.multiLine && smart && Layout.mayLayOut(start, layout)
+            layoutHold = !start.isEmpty && context.field.multiLine && smart && DictationLayout.mayLayOut(start, layout)
             if start.isEmpty || layoutHold {
                 return ""
             }
@@ -266,8 +266,9 @@ public final class LiveTyping {
         var text = formatter.format(said, continuesSentence: continues, searchField: context.field.search)
         if !text.isEmpty && smart {
             let corrected = SelfCorrection.apply(text)
+            let email = context.field.email
             let laid = layout && context.field.multiLine
-                ? Layout.apply(text, LayoutContext(multiLine: true, atStart: atStart, email: context.field.email))
+                ? DictationLayout.apply(text, LayoutContext(multiLine: true, atStart: atStart, email: email))
                 : corrected
 
             // A laid-out list or email starts on its own line unless the cursor is at the start of one (PLAN 3.3).

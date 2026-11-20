@@ -5,9 +5,9 @@ private let rate = 16000
 private let tenSeconds = (0..<(rate * 10)).map { Float($0) }
 
 /// Seconds as .NET's `TimeSpan.FromSeconds` keeps them (whole ticks of 100 ns), as in the C# test.
-private func seg(_ start: Double, _ end: Double) -> SpeechRegion {
-    (Double(Int64(start * 10_000_000)) / 10_000_000, Double(Int64(end * 10_000_000)) / 10_000_000)
-}
+private func seg(_ start: Double, _ end: Double) -> SpeechRegion { SpeechRegion(start: ticks(start), end: ticks(end)) }
+
+private func ticks(_ seconds: Double) -> Double { Double(Int64(seconds * 10_000_000)) / 10_000_000 }
 
 /// The same cases as thumbfree-windows tests/ThumbFree.Core.Tests/SpeechSegmentsTests.cs.
 final class SpeechSegmentsTests: XCTestCase {

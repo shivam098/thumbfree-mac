@@ -98,7 +98,8 @@ public enum Hallucinations {
 /// The personal dictionary as typed in settings: one "heard = typed" per line, for words the recognizer mishears
 /// completely ("journals = genres"); `\n` in "typed" is a line break. Becomes `DictationOptions.replacements`.
 public enum PersonalDictionary {
-    /// In the order the lines are (a "heard" given twice keeps its first place and its last "typed").
+    /// In the order the lines are (a "heard" given twice keeps its first place and its last "typed"). Keep that order
+    /// when adding these to `DictationOptions.replacements`: of two keys the same length, the earlier wins.
     public static func parse(_ text: String?) -> [(key: String, value: String)] {
         var map: [(key: String, value: String)] = []
         var positions: [[Unicode.Scalar]: Int] = [:]

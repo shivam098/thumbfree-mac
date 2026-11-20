@@ -5,7 +5,7 @@ private let rate = 16000
 
 /// `(TimeSpan.FromSeconds(start), TimeSpan.FromSeconds(end))` from the C# test: .NET keeps whole ticks of 100 ns, so
 /// the seconds here are the same doubles as there, and every sample position comes out the same.
-private func seg(_ start: Double, _ end: Double) -> SpeechRegion { (ticks(start), ticks(end)) }
+private func seg(_ start: Double, _ end: Double) -> SpeechRegion { SpeechRegion(start: ticks(start), end: ticks(end)) }
 
 private func ticks(_ seconds: Double) -> Double { Double(Int64(seconds * 10_000_000)) / 10_000_000 }
 
@@ -39,6 +39,8 @@ private final class Calls {
     var labels: [String] = []
     var count = 0
 }
+
+private struct DetectionFailed: Error {}
 
 /// The same cases as thumbfree-windows tests/ThumbFree.Core.Tests/DictationPreviewTests.cs.
 final class DictationPreviewTests: XCTestCase {
@@ -160,5 +162,38 @@ final class DictationPreviewTests: XCTestCase {
         let pause = rate * 7 / 10
         XCTAssertEqual(rate * 23 / 10, DictationPreview.findPhraseEnd([seg(0, 2), seg(3, 4)], rate * 4, rate, pause))
         XCTAssertEqual(rate * 43 / 10, DictationPreview.findPhraseEnd([seg(0, 2), seg(2.5, 4)], rate * 5, rate, pause))
+    }
+
+    // MARK: Beyond the C# tests
+
+    func testADetectorThatFailsStopsTheUpdate() async {
+        // As in C#, its error comes through: taken for silence, the audio would be dropped.
+        let calls = Calls()
+        let speech = detector(seg(0.2, 2), seg(3, 5))
+        let preview = DictationPreview(
+            transcribe: { "tentative " + label($0) },
+            detect: { slice in
+                calls.count += 1
+                if calls.count == 2 {
+                    throw DetectionFailed()
+                }
+
+                return speech(slice)
+            },
+            sampleRate: rate,
+            phrasePauseMs: 700,
+            commit: { label($0) })
+
+        do {
+            _ = try await preview.update(audio(6))
+            XCTFail("The update should have failed")
+        } catch {
+            XCTAssertTrue(error is DetectionFailed)
+        }
+
+        // The phrase kept before it failed stays kept; nothing is previewed.
+        XCTAssertEqual(["[0-2.3]"], preview.phrases)
+        XCTAssertEqual(rate * 23 / 10, preview.committedSamples)
+        XCTAssertEqual("", preview.tentative)
     }
 }

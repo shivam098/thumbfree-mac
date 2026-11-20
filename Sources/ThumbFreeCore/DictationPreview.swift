@@ -1,8 +1,5 @@
 import Foundation
 
-/// A stretch of speech, in seconds from the start of the audio it was found in.
-public typealias SpeechRegion = (start: TimeInterval, end: TimeInterval)
-
 /// Live transcript while tap-to-dictate dictation is recording. Each update re-transcribes the audio after the last
 /// committed point; once that exceeds the recognizer window, the oldest part is transcribed once, cut at a pause, and
 /// kept, so each update costs at most a window of audio. With phrases on (live typing with a model that isn't
@@ -11,7 +8,7 @@ public typealias SpeechRegion = (start: TimeInterval, end: TimeInterval)
 public final class DictationPreview {
     private let transcribe: ([Float]) async throws -> String
     private let commit: ([Float]) async throws -> String
-    private let detect: (([Float]) -> [SpeechRegion])?
+    private let detect: (([Float]) throws -> [SpeechRegion])?
     private let sampleRate: Int
     private let windowSamples: Int
     private let minCommitSamples: Int
@@ -20,13 +17,14 @@ public final class DictationPreview {
 
     /// - Parameters:
     ///   - transcribe: Returns cleaned text for the audio (empty when nothing was said).
-    ///   - detect: Speech regions in the audio; nil treats all audio as speech.
+    ///   - detect: Speech regions in the audio; nil treats all audio as speech. What it throws stops the update, as in
+    ///     C#: a detector that failed hasn't found silence.
     ///   - phrasePauseMs: A pause at least this long ends a phrase, which is then kept; nil keeps text only past the
     ///     window.
     ///   - commit: Transcribes audio that is kept (final quality); `transcribe` when nil.
     public init(
         transcribe: @escaping ([Float]) async throws -> String,
-        detect: (([Float]) -> [SpeechRegion])?,
+        detect: (([Float]) throws -> [SpeechRegion])?,
         sampleRate: Int,
         windowMs: Int = 12000,
         minCommitMs: Int = 3000,
@@ -51,10 +49,11 @@ public final class DictationPreview {
     /// The latest transcription of the audio after `committedSamples` (the phrase being spoken).
     public private(set) var tentative = ""
 
-    /// Transcribes `pending` (the audio recorded after `committedSamples`).
+    /// Transcribes `pending` (the audio recorded after `committedSamples`). Throws what the detector or a transcriber
+    /// throws; phrases kept before that stay kept, as in C#.
     public func update(_ pending: [Float]) async throws -> String {
         var pending = pending
-        var speech = detectSpeech(pending)
+        var speech = try detectSpeech(pending)
         while let pause = phrasePauseSamples, let end = Self.findPhraseEnd(speech, pending.count, sampleRate, pause) {
             let text = try await commit(Array(pending[..<end]))
             if !text.isEmpty {
@@ -63,7 +62,7 @@ public final class DictationPreview {
 
             committedSamples += end
             pending = Array(pending[end...])
-            speech = detectSpeech(pending)
+            speech = try detectSpeech(pending)
         }
 
         while pending.count > windowSamples {
@@ -77,7 +76,7 @@ public final class DictationPreview {
 
             committedSamples += cut
             pending = Array(pending[cut...])
-            speech = detectSpeech(pending)
+            speech = try detectSpeech(pending)
         }
 
         if speech.isEmpty {
@@ -140,8 +139,8 @@ public final class DictationPreview {
         return best > 0 ? best : windowSamples
     }
 
-    private func detectSpeech(_ audio: [Float]) -> [SpeechRegion] {
-        guard let detect else { return [(start: 0, end: Double(audio.count) / Double(sampleRate))] }
-        return detect(audio)
+    private func detectSpeech(_ audio: [Float]) throws -> [SpeechRegion] {
+        guard let detect else { return [SpeechRegion(start: 0, end: Double(audio.count) / Double(sampleRate))] }
+        return try detect(audio)
     }
 }

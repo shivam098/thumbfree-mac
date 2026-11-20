@@ -1,7 +1,7 @@
 import Foundation
 
-/// A regular expression in .NET's syntax, matched with .NET's rules, for code ported from the C# core.
-/// NSRegularExpression (ICU) does the matching, so the pattern is first translated where the two engines differ
+/// A regular expression in .NET's syntax, matched with .NET's rules, for code ported from C# (the ThumbFree and Jarvis
+/// cores). NSRegularExpression (ICU) does the matching, so the pattern is first translated where the two engines differ
 /// (`translate`):
 /// - `\w`, `\s`, `\d` and `\b` are .NET's sets, spelled out. ICU's `\w` also takes spacing marks (Devanagari's vowel
 ///   signs), and its `\b` skips combining marks;
@@ -10,24 +10,36 @@ import Foundation
 /// - only `\n` ends a line for `$` and `.` (ICU also takes \r, \u{2028} and others).
 /// Replacements use .NET's `$` syntax. Still different, for text no recognizer writes: ICU matches case-insensitively
 /// with full case folding ("ﬁrst" matches "first", "ß" matches "ss"), and to ICU a letter outside the Basic
-/// Multilingual Plane ("𝐀") is a letter, where .NET sees two UTF-16 halves that aren't.
-struct NetRegex: @unchecked Sendable {
-    struct Options: OptionSet, Sendable {
-        let rawValue: Int
+/// Multilingual Plane ("𝐀") is a letter, where .NET sees two UTF-16 halves that aren't. `RegexOptions.RightToLeft`
+/// isn't supported; for a pattern that matches a single character, the last match is the one it would find. Groups are
+/// numbered left to right, named ones too, where .NET numbers named groups after the others: in a pattern with both,
+/// read named groups by name.
+public struct NetRegex: @unchecked Sendable {
+    /// `RegexOptions`. `CultureInvariant` needs none: matching here never depends on the user's language.
+    public struct Options: OptionSet, Sendable {
+        public let rawValue: Int
 
-        static let ignoreCase = Options(rawValue: 1 << 0)
+        public init(rawValue: Int) {
+            self.rawValue = rawValue
+        }
 
-        /// `.` matches `\n` too.
-        static let singleline = Options(rawValue: 1 << 1)
+        /// `RegexOptions.IgnoreCase`.
+        public static let ignoreCase = Options(rawValue: 1 << 0)
+
+        /// `RegexOptions.Singleline`: `.` matches `\n` too.
+        public static let singleline = Options(rawValue: 1 << 1)
     }
 
-    /// The most a `*` or `+` in a look-behind repeats. The look-behinds here skip runs of spaces, never this long.
-    static let lookBehindLimit = 1000
+    /// The most a `*` or `+` in a look-behind repeats (.NET has no limit). ICU tries every length up to it at each
+    /// position, so it's small. The core's look-behinds skip the spaces left where fillers were taken out, two per
+    /// filler: 15 fillers in a row fit.
+    public static let lookBehindLimit = 32
 
     private let regex: NSRegularExpression
 
-    /// `pattern` is in .NET's syntax. Traps on a bad pattern: they're all constants.
-    init(_ pattern: String, _ options: Options = []) {
+    /// `pattern` is in .NET's syntax. Traps on a bad pattern, so it's for constant ones; for a pattern built at run
+    /// time, `NetRegex(icu: NetRegex.translate(pattern), options)` returns nil instead.
+    public init(_ pattern: String, _ options: Options = []) {
         guard let regex = NetRegex(icu: NetRegex.translate(pattern), options) else {
             preconditionFailure("Bad pattern: \(pattern)")
         }
@@ -35,8 +47,8 @@ struct NetRegex: @unchecked Sendable {
         self = regex
     }
 
-    /// `pattern` is already in ICU's syntax; nil if ICU rejects it.
-    init?(icu pattern: String, _ options: Options = []) {
+    /// `pattern` is already in ICU's syntax (from `translate`); nil if ICU rejects it.
+    public init?(icu pattern: String, _ options: Options = []) {
         var icuOptions: NSRegularExpression.Options = [.useUnixLineSeparators]
         if options.contains(.ignoreCase) {
             icuOptions.insert(.caseInsensitive)
@@ -51,29 +63,29 @@ struct NetRegex: @unchecked Sendable {
     }
 
     /// `(?<![\w])text(?![\w])`, case-insensitive: `text` as a whole word (C#'s `Regex.Escape` between those).
-    static func wholeWord(_ text: String) -> NetRegex? {
+    public static func wholeWord(_ text: String) -> NetRegex? {
         NetRegex(icu: translate(#"(?<![\w])"#) + escape(text) + translate(#"(?![\w])"#), .ignoreCase)
     }
 
     /// `Regex.Match`: the first match, or nil.
-    func match(_ text: String) -> NetMatch? {
+    public func match(_ text: String) -> NetMatch? {
         regex.firstMatch(in: text, options: [], range: Self.whole(text)).map { NetMatch(text, $0) }
     }
 
     /// `Regex.Matches`, left to right.
-    func matches(_ text: String) -> [NetMatch] {
+    public func matches(_ text: String) -> [NetMatch] {
         regex.matches(in: text, options: [], range: Self.whole(text)).map { NetMatch(text, $0) }
     }
 
     /// `Regex.IsMatch`.
-    func isMatch(_ text: String) -> Bool {
+    public func isMatch(_ text: String) -> Bool {
         regex.firstMatch(in: text, options: [], range: Self.whole(text)) != nil
     }
 
     private static func whole(_ text: String) -> NSRange { NSRange(location: 0, length: text.utf16.count) }
 
     /// `Regex.Replace` with a `MatchEvaluator`.
-    func replace(_ text: String, _ evaluator: (NetMatch) -> String) -> String {
+    public func replace(_ text: String, _ evaluator: (NetMatch) -> String) -> String {
         let found = matches(text)
         if found.isEmpty {
             return text
@@ -92,8 +104,8 @@ struct NetRegex: @unchecked Sendable {
     }
 
     /// `Regex.Replace` with a replacement pattern in .NET's syntax: `$1` or `${1}`, `$&`, `` $` ``, `$'`, `$+`, `$_`
-    /// and `$$`. Anything else is literal, a backslash too.
-    func replace(_ text: String, _ replacement: String) -> String {
+    /// and `$$`. Anything else is literal, a backslash too, and so is `${name}`: named groups aren't substituted.
+    public func replace(_ text: String, _ replacement: String) -> String {
         let groups = regex.numberOfCaptureGroups
         let parts = NetRegex.parseReplacement(replacement, groups: groups)
         return replace(text) { match in
@@ -114,7 +126,7 @@ struct NetRegex: @unchecked Sendable {
     }
 
     /// `Regex.Split` (for patterns without capture groups): the pieces between matches, empty ones included.
-    func split(_ text: String) -> [String] {
+    public func split(_ text: String) -> [String] {
         var pieces: [String] = []
         var copied = text.startIndex
         for match in matches(text) {
@@ -138,7 +150,7 @@ struct NetRegex: @unchecked Sendable {
     private static let boundaryWord = word + #"\x{200C}\x{200D}"#
 
     /// `pattern`, in .NET's syntax, in ICU's syntax with .NET's meaning.
-    static func translate(_ pattern: String) -> String {
+    public static func translate(_ pattern: String) -> String {
         let p = Array(pattern.unicodeScalars)
         var out = String.UnicodeScalarView()
         var outer: [Bool] = []
@@ -286,8 +298,9 @@ struct NetRegex: @unchecked Sendable {
         }
     }
 
-    /// `text` matched literally: a backslash before each ASCII symbol and punctuation mark.
-    static func escape(_ text: String) -> String {
+    /// `text` matched literally, in .NET's or ICU's syntax (`Regex.Escape`): a backslash before each ASCII symbol and
+    /// punctuation mark.
+    public static func escape(_ text: String) -> String {
         var out = String.UnicodeScalarView()
         for c in text.unicodeScalars {
             let v = c.value
@@ -405,12 +418,12 @@ struct NetRegex: @unchecked Sendable {
 /// A match of a `NetRegex` (.NET's `Match`), with positions as `String.Index`es in `text`. A match may start or end
 /// inside a `Character` (before a combining mark, or between \r and \n), as it does in C#: its bounds are always
 /// between Unicode scalars, so slicing `text` with them keeps every scalar.
-struct NetMatch {
+public struct NetMatch {
     /// The text that was searched.
-    let text: String
+    public let text: String
 
     /// Where the whole match is.
-    let range: Range<String.Index>
+    public let range: Range<String.Index>
 
     private let result: NSTextCheckingResult
 
@@ -421,19 +434,19 @@ struct NetMatch {
     }
 
     /// `Match.Value`.
-    var value: String { String(text[range]) }
+    public var value: String { String(text[range]) }
 
     /// Where group `index` matched, or nil if it took no part in the match.
-    func groupRange(_ index: Int) -> Range<String.Index>? {
+    public func groupRange(_ index: Int) -> Range<String.Index>? {
         let found = result.range(at: index)
         return found.location == NSNotFound ? nil : NetMatch.bounds(found, in: text)
     }
 
     /// `Groups[index].Value`: "" for a group that took no part.
-    func group(_ index: Int) -> String { groupRange(index).map { String(text[$0]) } ?? "" }
+    public func group(_ index: Int) -> String { groupRange(index).map { String(text[$0]) } ?? "" }
 
-    /// `Groups[name].Value`.
-    func group(named name: String) -> String {
+    /// `Groups[name].Value`, for a group the pattern names: "" if it took no part.
+    public func group(named name: String) -> String {
         let found = result.range(withName: name)
         return found.location == NSNotFound ? "" : String(text[NetMatch.bounds(found, in: text)])
     }

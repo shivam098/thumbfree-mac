@@ -48,7 +48,7 @@ final class SharedVectorsTests: XCTestCase {
             let flags = cells[0].unicodeScalars
             let context = LayoutContext(
                 multiLine: flags.contains("m"), atStart: flags.contains("s"), email: flags.contains("e"))
-            let actual = Layout.apply(formatter.format(Vectors.unescape(cells[1])), context)
+            let actual = DictationLayout.apply(formatter.format(Vectors.unescape(cells[1])), context)
             if !DotNet.ordinalEquals(actual, Vectors.unescape(cells[2])) {
                 failures.append(failure(cells[0], cells[1], cells[2], actual))
             }

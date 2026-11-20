@@ -44,7 +44,7 @@ final class UnicodeTextTests: XCTestCase {
             ("My plan: first, नमस्ते, second, 👍, third, done.", "My plan:\n1. नमस्ते.\n2. 👍.\n3. Done."),
         ]
         for (input, expected) in cases {
-            assertScalars(expected, Layout.apply(formatter.format(input), context), input)
+            assertScalars(expected, DictationLayout.apply(formatter.format(input), context), input)
         }
     }
 

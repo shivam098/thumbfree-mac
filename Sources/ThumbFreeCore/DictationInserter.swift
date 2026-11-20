@@ -54,15 +54,19 @@ public protocol Desktop: AnyObject {
     /// True if the focused text field ends in a non-space character (so a leading space is needed); nil if unknown.
     func focusedTextEndsWithNonWhitespace() -> Bool?
 
-    func typeText(_ text: String)
+    /// Types `text` into the focused field. Throws if it couldn't (the field changed, input isn't allowed, the
+    /// pasteboard kept changing); typing stops there, as when the C# desktop throws.
+    func typeText(_ text: String) throws
 
-    func pressKeys(_ chord: String)
+    /// Presses a chord such as "Shift+Enter"; throws as `typeText` does.
+    func pressKeys(_ chord: String) throws
 }
 
 /// Formats dictated speech and inserts it where the cursor is. The key press that started dictation is the user's
 /// consent, so only password fields and administrator windows are refused. Spacing, continuing a sentence and the field
 /// rules are the ones every platform shares (`Insertion`, `LiveTyping`); typing, line breaks as each app's new-line
-/// keys and the refusals are the platform's own.
+/// keys and the refusals are the platform's own. What the desktop throws comes through, as in C#: what was typed before
+/// it stays, the rest isn't typed, "Typed." isn't reported and `lastText` is left as it was.
 public final class DictationInserter {
     public static let defaultNewLineKeys = "Shift+Enter"
 
@@ -73,8 +77,14 @@ public final class DictationInserter {
     private let newLineKeys: [[Unicode.Scalar]: String]
 
     /// - Parameter newLineKeysByProcess: Keys for a line break per process name, in any case (editors: Enter). Others
-    ///   get Shift+Enter, which chat apps treat as a new line instead of “send”.
-    public init(_ desktop: any Desktop, _ formatter: DictationFormatter, newLineKeysByProcess: [String: String] = [:]) {
+    ///   get Shift+Enter, which chat apps treat as a new line instead of “send”. Keep the settings file's order: of two
+    ///   names that differ only in case, the last counts, as when the Windows app merges its settings (decoding them
+    ///   into a `[String: String]` would lose the order).
+    public init(
+        _ desktop: any Desktop,
+        _ formatter: DictationFormatter,
+        newLineKeysByProcess: [(process: String, keys: String)] = []
+    ) {
         self.desktop = desktop
         self.formatter = formatter
         var newLineKeys: [[Unicode.Scalar]: String] = [:]
@@ -100,7 +110,7 @@ public final class DictationInserter {
     ///     smart formatting, the field's rules (no line breaks in single-line boxes, no full stop in search boxes) and
     ///     spacing. Without it only the formatter runs and the field is treated as multi-line.
     @discardableResult
-    public func insert(_ transcript: String, _ context: LiveTypingContext? = nil) -> Bool {
+    public func insert(_ transcript: String, _ context: LiveTypingContext? = nil) throws -> Bool {
         let heard = TranscriptText.clean(transcript)
         if context?.field.password == true {
             report(.warning, Self.passwordRefusal, heard)
@@ -124,7 +134,7 @@ public final class DictationInserter {
             return false
         }
 
-        if !typeOut(text, addSpace: context?.textBefore == nil, heard: heard) {
+        guard try typeOut(text, addSpace: context?.textBefore == nil, heard: heard) else {
             return false
         }
 
@@ -137,24 +147,28 @@ public final class DictationInserter {
     /// the app's new-line keys. The same refusals as `insert`, also when `field` says it's a password field, but only
     /// problems are reported, so the pill isn't flooded while speaking. Returns false if nothing was typed.
     @discardableResult
-    public func typePrepared(_ text: String, _ field: FieldInfo? = nil) -> Bool {
+    public func typePrepared(_ text: String, _ field: FieldInfo? = nil) throws -> Bool {
         if field?.password == true {
             report(.warning, Self.passwordRefusal)
             return false
         }
 
-        return !text.isEmpty && typeOut(text, addSpace: false, heard: nil)
+        if text.isEmpty {
+            return false
+        }
+
+        return try typeOut(text, addSpace: false, heard: nil)
     }
 
     /// Inserts the last dictated text again.
     @discardableResult
-    public func repeatLast() -> Bool {
+    public func repeatLast() throws -> Bool {
         guard let last = lastText, !last.isEmpty else {
             report(.info, "There's no previous dictation yet.")
             return false
         }
 
-        if !typeOut(last, addSpace: true, heard: nil) {
+        guard try typeOut(last, addSpace: true, heard: nil) else {
             return false
         }
 
@@ -162,7 +176,7 @@ public final class DictationInserter {
         return true
     }
 
-    private func typeOut(_ text: String, addSpace: Bool, heard: String?) -> Bool {
+    private func typeOut(_ text: String, addSpace: Bool, heard: String?) throws -> Bool {
         guard let window = desktop.foregroundWindow() else {
             report(.warning, "There's no window to type into.", heard)
             return false
@@ -189,11 +203,11 @@ public final class DictationInserter {
         let newLine = newLineKeys[DotNet.ordinalIgnoreCase(window.processName)] ?? Self.defaultNewLineKeys
         for (i, part) in DotNet.split(text, ["\n"]).enumerated() {
             if i > 0 {
-                desktop.pressKeys(newLine)
+                try desktop.pressKeys(newLine)
             }
 
             if !part.isEmpty {
-                desktop.typeText(part)
+                try desktop.typeText(part)
             }
         }
 

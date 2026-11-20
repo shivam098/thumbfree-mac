@@ -20,7 +20,7 @@ final class NetRegexTests: XCTestCase {
             (#"[\v\u2028]"#, #"[\x{0B}\u2028]"#),
             (#"[\b]"#, #"[\x{08}]"#),
             (#"[]a&b[]"#, #"[\]a\&b\[]"#),
-            (#"(?<!a{2,})(?<=b{1,3})(?=\s+)y+"#, #"(?<!a{2,1000})(?<=b{1,3})(?=[\t-\r\x{85}\p{Z}]+)y+"#),
+            (#"(?<!a{2,})(?<=b{1,3})(?=\s+)y+"#, #"(?<!a{2,32})(?<=b{1,3})(?=[\t-\r\x{85}\p{Z}]+)y+"#),
             (#"(?<p>[?.!,]?)\1"#, #"(?<p>[?.!,]?)\1"#),
             (#"\p{L}\P{Lu}[\p{Nd}]"#, #"\p{L}\P{Lu}[\p{Nd}]"#),
             (#"a.b$\."#, #"a.b$\."#),
@@ -31,14 +31,26 @@ final class NetRegexTests: XCTestCase {
     }
 
     func testLookBehindsAreBounded() {
+        // ICU tries every length up to the bound at each position: 32 keeps a long dictation fast.
         XCTAssertEqual(
-            "(?<=^|[.!?][\(Self.s)]{1,1000}|,[\(Self.s)]{0,1000})x",
+            "(?<=^|[.!?][\(Self.s)]{1,32}|,[\(Self.s)]{0,32})x",
             NetRegex.translate(#"(?<=^|[.!?]\s+|,\s*)x"#))
 
-        // A run of spaces far longer than any dictation has is still seen.
+        // Up to 32 spaces, a look-behind sees them as .NET does; .NET sees longer runs too.
         let regex = NetRegex(#"(?<=,\s+)x"#)
-        XCTAssertTrue(regex.isMatch("," + String(repeating: " ", count: 500) + "x"))
-        XCTAssertFalse(regex.isMatch("a" + String(repeating: " ", count: 500) + "x"))
+        XCTAssertTrue(regex.isMatch("," + String(repeating: " ", count: 32) + "x"))
+        XCTAssertFalse(regex.isMatch("," + String(repeating: " ", count: 33) + "x"))
+        XCTAssertFalse(regex.isMatch("a" + String(repeating: " ", count: 32) + "x"))
+
+        // Each filler taken out leaves two spaces where “I mean,” is looked for after a sentence or a comma: 15 in a
+        // row leave 31, within the bound, so it's dropped as in C#; from 16 it stays, where C# drops it.
+        let formatter = DictationFormatter()
+        func said(_ fillers: Int) -> String {
+            "It's done." + String(repeating: " um", count: fillers) + " I mean, it works."
+        }
+
+        XCTAssertEqual("It's done. It works.", formatter.format(said(15)))
+        XCTAssertEqual("It's done. I mean, it works.", formatter.format(said(16)))
     }
 
     func testMatchingFollowsDotNet() {

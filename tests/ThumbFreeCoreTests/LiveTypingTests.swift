@@ -446,17 +446,18 @@ final class LiveTypingTests: XCTestCase {
         ]
         for (start, expected) in cases {
             let email = LayoutContext(multiLine: true, atStart: true, email: true)
-            XCTAssertEqual(expected, Layout.mayLayOut(start, email), start)
+            XCTAssertEqual(expected, DictationLayout.mayLayOut(start, email), start)
         }
     }
 
     func testGreetingsHoldOnlyAtTheStartOfAnEmailAndNothingHoldsInASingleLineField() {
-        XCTAssertTrue(Layout.mayLayOut("Hey Tim,", LayoutContext(multiLine: true, atStart: true, email: true)))
-        XCTAssertFalse(Layout.mayLayOut("Hey Tim,", LayoutContext(multiLine: true, atStart: true, email: false)))
-        XCTAssertFalse(Layout.mayLayOut("Hey Tim,", LayoutContext(multiLine: true, atStart: false, email: true)))
+        let greeting = "Hey Tim,"
+        XCTAssertTrue(DictationLayout.mayLayOut(greeting, LayoutContext(multiLine: true, atStart: true, email: true)))
+        XCTAssertFalse(DictationLayout.mayLayOut(greeting, LayoutContext(multiLine: true, atStart: true, email: false)))
+        XCTAssertFalse(DictationLayout.mayLayOut(greeting, LayoutContext(multiLine: true, atStart: false, email: true)))
         let list = "Things to do today"
-        XCTAssertTrue(Layout.mayLayOut(list, LayoutContext(multiLine: true, atStart: false, email: false)))
-        XCTAssertFalse(Layout.mayLayOut(list, LayoutContext(multiLine: false, atStart: true, email: true)))
+        XCTAssertTrue(DictationLayout.mayLayOut(list, LayoutContext(multiLine: true, atStart: false, email: false)))
+        XCTAssertFalse(DictationLayout.mayLayOut(list, LayoutContext(multiLine: false, atStart: true, email: true)))
     }
 
     /// Typing live doesn't change the outcome unless `LiveTyping.finishedWithoutLayout` says so. Over generated

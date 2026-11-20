@@ -6,11 +6,12 @@ public struct DictationOptions: Sendable {
     public var spokenPunctuation: Bool
 
     /// Whole-word, case-insensitive fixes applied to dictated text (e.g. "git hub" → "GitHub"). Longer keys go first;
-    /// of keys the same length, the one listed first (in C#, the dictionary's order).
+    /// of keys the same length, the one listed first (in C#, the dictionary's order). Keep the settings file's order:
+    /// decoding it into a `[String: String]` loses it, and with it which of two such keys wins.
     public var replacements: [(key: String, value: String)]
 
     /// Saying the trigger (or “insert <trigger>”) as a whole phrase types the expansion instead. Of two triggers that
-    /// read the same, the first counts.
+    /// read the same, the first counts, so this too must keep the settings file's order.
     public var snippets: [(key: String, value: String)]
 
     public init(

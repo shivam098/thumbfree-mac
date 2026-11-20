@@ -59,7 +59,7 @@ public final class PasteTyper {
         let text = text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
         var put = 1
         while true {
-            let saved = Self.maySave(pasteboard.access) ? pasteboard.save() : .unreadable
+            let saved = saveIfReadable()
             let replacing = saved == .unreadable
             if replacing, whenUnreadable == .typeWithKeys {
                 try typeWithKeys(text, beforeKeys: beforeKeys)
@@ -145,6 +145,10 @@ public final class PasteTyper {
     /// ⌘, ⌥, ⌃, ⇧ or Fn is held now.
     public var modifiersDown: Bool { !keys.heldModifiers.isEmpty }
 
+    /// What macOS lets ThumbFree do with the pasteboard, for the guide to explain: once macOS has asked, dictations
+    /// are typed with keys until you choose Allow for ThumbFree in System Settings (Privacy & Security).
+    public var pasteboardAccess: PasteboardAccess { pasteboard.access }
+
     /// Whether the pasteboard is read, to put it back afterwards: only when that doesn't ask you each time. Before
     /// macOS 15.4, with Always Allow, and before macOS has ever asked (it may then ask once), it is; when macOS asks
     /// each time or always denies, it isn't read at all, and the text is typed with keys.
@@ -215,6 +219,21 @@ public final class PasteTyper {
         if keys.secureInput {
             throw Failure.secureInput
         }
+    }
+
+    /// What's on the pasteboard, to put back, or `.unreadable` when it may not be read (`maySave`). When this read was
+    /// the first macOS asked you about (the access was `.default` and isn't any more) and it found nothing, the answer
+    /// may have been Don't Allow, which can look like an empty pasteboard: it counts as unreadable, so a copy that
+    /// couldn't be seen is never emptied.
+    private func saveIfReadable() -> Saved {
+        let access = pasteboard.access
+        guard Self.maySave(access) else { return .unreadable }
+        let saved = pasteboard.save()
+        if access == .default, saved == .empty, pasteboard.access != .default {
+            return .unreadable
+        }
+
+        return saved
     }
 
     private func putBack(_ saved: Saved, unlessChangedSince ours: Int) {

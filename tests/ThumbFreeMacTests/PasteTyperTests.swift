@@ -208,6 +208,29 @@ final class PasteTyperTests: XCTestCase {
         XCTAssertEqual(1, pasteboard.changeCount)
     }
 
+    func testNothingFoundByTheReadThatMadeMacOSAskFirstIsUnreadableNotEmpty() throws {
+        // Don't Allow can look like an empty pasteboard: emptying it afterwards would lose a copy we couldn't see.
+        let (typer, pasteboard, keys) = makeTyper(copied: nil)
+        pasteboard.access = .default
+        pasteboard.accessAfterSave = .ask
+
+        try typer.paste("Hello there.")
+
+        XCTAssertEqual([], keys.pasted)
+        XCTAssertEqual(["Hello there."], keys.typed)
+        XCTAssertEqual(1, pasteboard.changeCount, "the pasteboard isn't touched")
+
+        // Allowed: what was read is pasted over and put back, as before macOS asks.
+        let (allowedTyper, allowed, allowedKeys) = makeTyper(copied: "copied before")
+        allowed.access = .default
+        allowed.accessAfterSave = .ask
+
+        try allowedTyper.paste("Hello there.")
+
+        XCTAssertEqual(["Hello there."], allowedKeys.pasted)
+        XCTAssertEqual("copied before", allowed.text)
+    }
+
     func testTheHostCanChooseToPasteAndReplaceAPasteboardThatCantBeRead() throws {
         let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
         pasteboard.access = .alwaysDeny
@@ -412,6 +435,8 @@ private final class FakePasteboard: PasteTyper.Pasteboard {
     private(set) var contents: PasteTyper.Contents?
     private(set) var changeCount = 1
     var access = PasteTyper.PasteboardAccess.unrestricted
+    /// What `access` becomes once the pasteboard has been read: `.ask` after macOS's first alert.
+    var accessAfterSave: PasteTyper.PasteboardAccess?
     /// Has types but no data that can be read (the app it came from has quit, or macOS said no).
     var unreadable = false
     private(set) var saves = 0
@@ -431,6 +456,7 @@ private final class FakePasteboard: PasteTyper.Pasteboard {
 
     func save() -> PasteTyper.Saved {
         saves += 1
+        access = accessAfterSave ?? access
         if unreadable {
             return .unreadable
         }

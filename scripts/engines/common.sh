@@ -7,6 +7,15 @@ xcode_build=16F6
 cmake_version=4.4.5
 cmake_sha256=679e77a96b9ef9484cc6c1445255fc4f84206b48a65420efbedf16bdab55fbff
 
+# The onnxruntime in sherpa-onnx's static libraries: release v1.28.2 of csukuangfj/onnxruntime-libs, built from ONNX
+# Runtime's tag. The same release's package for macOS has its license and third-party notices (for CSherpaOnnx's
+# notice) and its C API header (for the smoke test).
+onnxruntime_version=1.28.2
+onnxruntime_commit=33ca9628233dc8f002435e868d4c2e9f82766ca1
+onnxruntime_release=https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$onnxruntime_version
+onnxruntime_package=onnxruntime-osx-arm64-$onnxruntime_version
+onnxruntime_package_sha256=d9e5c0c79929e201f5b8eb095e6809a91ce78be9866a1bca0dfab7e20b40ae40
+
 # The toolchain, for the notices.
 toolchain() {
   echo "Xcode $xcode_version ($xcode_build) and CMake $cmake_version"

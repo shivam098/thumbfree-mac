@@ -204,11 +204,14 @@ extension AudioCapture {
     }
 
     /// Core Audio's default input device: `changed` runs on the main thread when it's another device.
+    ///
+    /// This uses Core Audio's function listener, matched by the function and its client data. A Swift closure passed as
+    /// a listener block reaches Core Audio as a new block each time, so the block API's removal doesn't find it, and
+    /// Core Audio would keep the block and call it for good; a test showed it. The client data is the listener's
+    /// number, looked up behind a lock, so a call that comes after `stop()` finds nothing.
     final class DefaultInputWatcher {
-        private typealias Listener = @convention(block) (UInt32, UnsafePointer<AudioObjectPropertyAddress>) -> Void
-
-        /// Kept as a block, so the block taken off Core Audio is the very one given to it.
-        private var listener: Listener?
+        /// The number Core Audio passes back, while started.
+        private(set) var id: Int?
 
         deinit {
             stop()
@@ -218,31 +221,84 @@ extension AudioCapture {
         @discardableResult
         func start(_ changed: @escaping @MainActor @Sendable () -> Void) -> Bool {
             stop()
+            let id = DefaultInputWatcher.handlers.add(changed)
             var address = DefaultInputWatcher.address
-            let listener: Listener = { _, _ in
-                // On the main queue, as asked below.
-                MainActor.assumeIsolated {
-                    changed()
-                }
+            let clientData = UnsafeMutableRawPointer(bitPattern: id)
+            let status = AudioObjectAddPropertyListener(
+                DefaultInputWatcher.system, &address, DefaultInputWatcher.callback, clientData)
+            guard status == noErr else {
+                DefaultInputWatcher.handlers.remove(id)
+                return false
             }
 
-            let system = AudioObjectID(kAudioObjectSystemObject)
-            guard AudioObjectAddPropertyListenerBlock(system, &address, .main, listener) == noErr else { return false }
-            self.listener = listener
+            self.id = id
             return true
         }
 
-        func stop() {
-            guard let listener else { return }
+        /// False when nothing was listening, or Core Audio didn't take the listener off.
+        @discardableResult
+        func stop() -> Bool {
+            guard let id else { return false }
+            self.id = nil
+            DefaultInputWatcher.handlers.remove(id)
             var address = DefaultInputWatcher.address
-            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
-            self.listener = nil
+            let clientData = UnsafeMutableRawPointer(bitPattern: id)
+            let status = AudioObjectRemovePropertyListener(
+                DefaultInputWatcher.system, &address, DefaultInputWatcher.callback, clientData)
+            return status == noErr
         }
 
-        private static var address: AudioObjectPropertyAddress {
+        static let system = AudioObjectID(kAudioObjectSystemObject)
+
+        static var address: AudioObjectPropertyAddress {
             AudioObjectPropertyAddress(
                 mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain)
+        }
+
+        /// Called by Core Audio on a thread of its own, with the listener's number as the client data.
+        static let callback: AudioObjectPropertyListenerProc = { _, _, _, clientData in
+            let id = Int(bitPattern: clientData)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if let changed = DefaultInputWatcher.handlers.handler(id) {
+                        changed()
+                    }
+                }
+            }
+
+            return noErr
+        }
+
+        private static let handlers = Handlers()
+
+        /// The listeners' handlers by number: Core Audio's thread reads them, the main thread adds and removes them.
+        private final class Handlers: @unchecked Sendable {
+            private let lock = NSLock()
+            private var last = 0
+            private var handlers: [Int: @MainActor @Sendable () -> Void] = [:]
+
+            func add(_ handler: @escaping @MainActor @Sendable () -> Void) -> Int {
+                locked {
+                    last += 1
+                    handlers[last] = handler
+                    return last
+                }
+            }
+
+            func remove(_ id: Int) {
+                locked { handlers[id] = nil }
+            }
+
+            func handler(_ id: Int) -> (@MainActor @Sendable () -> Void)? {
+                locked { handlers[id] }
+            }
+
+            private func locked<Value>(_ body: () -> Value) -> Value {
+                lock.lock()
+                defer { lock.unlock() }
+                return body()
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import XCTest
 @testable import ThumbFreeMac
 
@@ -41,11 +42,6 @@ final class FakeAudioInput: AudioCapture.Input, @unchecked Sendable {
         guard !changes.isEmpty else { return }
         changes[start ?? changes.count - 1]()
     }
-}
-
-/// Lives as long as something holds it.
-private final class Sentinel: Sendable {
-    func touch() {}
 }
 
 /// The chunks a capture sends, from whatever thread.
@@ -315,26 +311,51 @@ final class AudioCaptureTests: XCTestCase {
         XCTAssertEqual(1, input.stops)
     }
 
-    /// Core Audio holds a listener until the very same block is taken off it; a block that isn't would keep firing.
+    /// Core Audio calls the listener on a thread of its own: it reaches the main thread until `stop()`, which takes it
+    /// off Core Audio.
     @MainActor
-    func testTheDefaultInputListenerComesOffCoreAudioWhenStopped() throws {
+    func testTheDefaultInputListenerReachesTheMainThreadUntilStopped() throws {
         let watcher = AudioCapture.DefaultInputWatcher()
-        weak var held: Sentinel?
-        do {
-            let sentinel = Sentinel()
-            held = sentinel
-            guard watcher.start({ sentinel.touch() }) else {
-                throw XCTSkip("Core Audio took no listener on this machine")
+        let calls = MainThreadCalls()
+        guard watcher.start({ calls.record() }) else {
+            throw XCTSkip("Core Audio took no listener on this machine")
+        }
+
+        let id = try XCTUnwrap(watcher.id)
+        notifyAsCoreAudio(id)
+        XCTAssertEqual(1, calls.count)
+        XCTAssertTrue(calls.onMainThread)
+
+        XCTAssertTrue(watcher.stop())
+        // A call already on its way when the listener came off finds nothing.
+        notifyAsCoreAudio(id)
+        XCTAssertEqual(1, calls.count)
+        XCTAssertFalse(watcher.stop())
+    }
+
+    /// Calls the listener the way Core Audio does, from another thread, then lets the main queue run.
+    @MainActor
+    private func notifyAsCoreAudio(_ id: Int) {
+        let notified = expectation(description: "notified")
+        DispatchQueue.global().async {
+            var address = AudioCapture.DefaultInputWatcher.address
+            _ = AudioCapture.DefaultInputWatcher.callback(
+                AudioCapture.DefaultInputWatcher.system, 1, &address, UnsafeMutableRawPointer(bitPattern: id))
+            DispatchQueue.main.async {
+                notified.fulfill()
             }
         }
+        wait(for: [notified], timeout: 2)
+    }
+}
 
-        XCTAssertNotNil(held)
-        watcher.stop()
-        let deadline = Date().addingTimeInterval(2)
-        while held != nil && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        }
+@MainActor
+private final class MainThreadCalls {
+    private(set) var count = 0
+    private(set) var onMainThread = true
 
-        XCTAssertNil(held, "Core Audio still holds the default-input listener")
+    func record() {
+        count += 1
+        onMainThread = onMainThread && Thread.isMainThread
     }
 }

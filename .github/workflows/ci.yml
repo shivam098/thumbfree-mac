@@ -36,5 +36,47 @@ jobs:
       - name: Build
         run: swift build -c release
 
+      # The speech models the engine tests use (tests/ThumbFreeSpeechTests skips a model that isn't there), cached until
+      # the model catalog changes. Bump v1 when the list below changes.
+      - name: Speech models (restore)
+        id: speech-models
+        uses: actions/cache/restore@v6
+        with:
+          path: models
+          key: speech-models-v1-${{ hashFiles('Sources/ThumbFreeCore/Models.swift') }}
+
+      - name: Speech models (download)
+        if: steps.speech-models.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          # The files come from ModelCatalog itself (Models.swift needs nothing else), each checked against its SHA-256.
+          list="$RUNNER_TEMP/speech-models"
+          mkdir -p "$list"
+          cat > "$list/main.swift" <<'EOF'
+          let wanted: Set<String> = ["en-kroko-live", "en-parakeet-110m", "en-parakeet-0.6b", "hinglish-swift"]
+          for file in ModelCatalog.all.filter({ wanted.contains($0.id) }).flatMap(\.files) + [ModelCatalog.vad] {
+              print(file.path, file.url, file.sha256, file.bytes)
+          }
+          EOF
+          swiftc Sources/ThumbFreeCore/Models.swift "$list/main.swift" -o "$list/list-models"
+          "$list/list-models" | while read -r path url sha256 bytes; do
+            mkdir -p "models/$(dirname "$path")"
+            curl --fail --location --silent --show-error --retry 5 --retry-all-errors --output "models/$path" "$url"
+            if ! echo "$sha256  models/$path" | shasum -a 256 --check --status; then
+              echo "::error::models/$path doesn't match its SHA-256 $sha256"
+              exit 1
+            fi
+            echo "$path: $bytes bytes, SHA-256 checked"
+          done
+
+      - name: Speech models (save)
+        if: steps.speech-models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: models
+          key: ${{ steps.speech-models.outputs.cache-primary-key }}
+
       - name: Tests
+        env:
+          THUMBFREE_MODELS: ${{ github.workspace }}/models
         run: swift test

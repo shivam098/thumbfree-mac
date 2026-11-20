@@ -40,7 +40,8 @@ one, copy the change to all four repos.
 ## Develop
 
 A Swift package for macOS 13 or later (`Package.swift`): the libraries ThumbFreeCore, ThumbFreeSpeech and ThumbFreeMac,
-and the ThumbFree app. GitHub's macOS runners build and test it on every change, and build a test `ThumbFree.app` in a
+the app's own layer ThumbFreeApp (settings, History, samples and the log, in the Windows app's file formats), and the
+ThumbFree app. GitHub's macOS runners build and test it on every change, and build a test `ThumbFree.app` in a
 `.dmg` (the **App** workflow's artifact). On a Mac:
 
 ```sh

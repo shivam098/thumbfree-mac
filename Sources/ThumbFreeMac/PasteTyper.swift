@@ -7,8 +7,9 @@ import Foundation
 /// it on this Mac, ⌘V goes out once held modifier keys are let go, and what was on the pasteboard goes back afterwards,
 /// unless something new was copied meanwhile. When what's there can't be read to put it back (macOS asks each time or
 /// never allows it, or the app it came from has quit), the text is typed with keys instead, so that copy is never lost
-/// (`whenUnreadable`). Sending keys needs the permission to control the computer. Each call blocks (up to a second for
-/// held keys, then `restoreDelay`): use it off the main thread, one call at a time.
+/// (`whenUnreadable`). Sending keys needs the permission to post events (`Permissions.Kind.postEvents`). Each call
+/// blocks (up to a second for held keys, then `restoreDelay`): use it off the main thread, one call at a time, and keep
+/// the main thread free meanwhile, as secure input is asked there.
 public final class PasteTyper {
     /// How many times the text goes on the pasteboard when something else was copied before ⌘V.
     static let maxPuts = 2
@@ -199,25 +200,37 @@ public final class PasteTyper {
     }
 
     /// Types `text` with key events that carry it (`Keys.type`), `unitsPerKey` UTF-16 units at a time, once held
-    /// modifier keys are let go and `beforeKeys` has passed, as before ⌘V. The pasteboard isn't touched.
+    /// modifier keys are let go and `beforeKeys` has passed, as before ⌘V. Secure input is checked again before each
+    /// key, as a long line takes a while. The pasteboard isn't touched.
     private func typeWithKeys(_ text: String, beforeKeys: () throws -> Void) throws {
         try beforeTheKeys(beforeKeys)
         for (index, piece) in Self.pieces(of: text, unitsEach: Self.unitsPerKey).enumerated() {
             if index > 0 {
                 sleep(Self.keyPause)
+                try checkSecureInput()
             }
 
             try keys.type(piece)
         }
     }
 
-    /// What happens right before keys go out: held modifier keys are let go, the caller's check runs, and nothing goes
-    /// out while a password is being typed somewhere (secure input).
+    /// What happens right before keys go out: held modifier keys are let go, the caller's check runs, and secure input
+    /// is checked.
     private func beforeTheKeys(_ check: () throws -> Void) throws {
         waitForModifiersReleased()
         try check()
-        if keys.secureInput {
+        try checkSecureInput()
+    }
+
+    /// Nothing goes out while a password is being typed somewhere (secure input), or while that can't be told.
+    private func checkSecureInput() throws {
+        switch keys.secureInput {
+        case .off:
+            return
+        case .on:
             throw Failure.secureInput
+        case .unknown:
+            throw Failure.secureInputUnknown
         }
     }
 
@@ -297,8 +310,8 @@ extension PasteTyper {
         /// The modifier keys held now.
         var heldModifiers: Modifiers { get }
 
-        /// IsSecureEventInputEnabled(): a password is being typed somewhere.
-        var secureInput: Bool { get }
+        /// IsSecureEventInputEnabled(): whether a password is being typed somewhere, or that couldn't be told.
+        var secureInput: FocusedField.SecureInput { get }
 
         /// ⌘V in the keyboard layout in use.
         var pasteChord: Chord { get }
@@ -428,12 +441,19 @@ extension PasteTyper {
         case pasteboardKeptChanging
         /// The text couldn't be put on the pasteboard.
         case pasteboardUnavailable
-        /// ThumbFree may not send keys: it hasn't the permission to control the computer.
+        /// ThumbFree may not send keys: it hasn't the permission to (`permission`).
         case notAllowed
         /// A password is being typed somewhere (secure input is on).
         case secureInput
+        /// Whether a password is being typed couldn't be told (`FocusedField.SecureInput.unknown`).
+        case secureInputUnknown
         /// The key events couldn't be made.
         case keysUnavailable
+
+        /// The permission that's missing, for the host to ask for or open in System Settings (`Permissions`).
+        public var permission: Permissions.Kind? {
+            self == .notAllowed ? .postEvents : nil
+        }
 
         public var errorDescription: String? {
             switch self {
@@ -442,9 +462,11 @@ extension PasteTyper {
             case .pasteboardUnavailable:
                 return "The text couldn't be put on the pasteboard."
             case .notAllowed:
-                return "ThumbFree may not type: turn it on in System Settings › Privacy & Security › Accessibility."
+                return "ThumbFree may not type: it needs the Accessibility permission."
             case .secureInput:
                 return "A password is being typed, so nothing was typed."
+            case .secureInputUnknown:
+                return "ThumbFree couldn't tell whether a password is being typed, so nothing was typed."
             case .keysUnavailable:
                 return "The keys couldn't be sent."
             }

@@ -143,20 +143,25 @@ final class PasteTyperTests: XCTestCase {
         XCTAssertEqual("copied before", pasteboard.text)
     }
 
-    func testNothingIsTypedWhileAPasswordIsBeingTyped() {
-        let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
-        keys.secureInput = true
+    func testNothingIsTypedWhileAPasswordIsBeingTypedOrThatCantBeTold() {
+        let states: [(FocusedField.SecureInput, PasteTyper.Failure)] = [
+            (.on, .secureInput), (.unknown, .secureInputUnknown),
+        ]
+        for (secureInput, failure) in states {
+            let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
+            keys.secureInput = secureInput
 
-        XCTAssertThrowsError(try typer.paste("Hello there.")) {
-            XCTAssertEqual(PasteTyper.Failure.secureInput, $0 as? PasteTyper.Failure)
+            XCTAssertThrowsError(try typer.paste("Hello there.")) {
+                XCTAssertEqual(failure, $0 as? PasteTyper.Failure)
+            }
+
+            XCTAssertThrowsError(try typer.press(.shiftReturn)) {
+                XCTAssertEqual(failure, $0 as? PasteTyper.Failure)
+            }
+
+            XCTAssertEqual([], keys.posted)
+            XCTAssertEqual("copied before", pasteboard.text)
         }
-
-        XCTAssertThrowsError(try typer.press(.shiftReturn)) {
-            XCTAssertEqual(PasteTyper.Failure.secureInput, $0 as? PasteTyper.Failure)
-        }
-
-        XCTAssertEqual([], keys.posted)
-        XCTAssertEqual("copied before", pasteboard.text)
     }
 
     func testNewLineKeysAreReadAsSettingsWriteThem() {
@@ -290,13 +295,13 @@ final class PasteTyperTests: XCTestCase {
     func testNothingIsTypedWithKeysWhileAPasswordIsBeingTypedOrWithoutThePermission() {
         let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
         pasteboard.unreadable = true
-        keys.secureInput = true
+        keys.secureInput = .on
 
         XCTAssertThrowsError(try typer.paste("Hello there.")) {
             XCTAssertEqual(PasteTyper.Failure.secureInput, $0 as? PasteTyper.Failure)
         }
 
-        keys.secureInput = false
+        keys.secureInput = .off
         keys.allowed = false
         XCTAssertThrowsError(try typer.paste("Hello there.")) {
             XCTAssertEqual(PasteTyper.Failure.notAllowed, $0 as? PasteTyper.Failure)
@@ -304,6 +309,19 @@ final class PasteTyperTests: XCTestCase {
 
         XCTAssertEqual([], keys.typed)
         XCTAssertEqual(1, pasteboard.changeCount)
+    }
+
+    func testSecureInputIsCheckedBeforeEachKeyOfALongLine() {
+        // A long line takes a while to type with keys: a password box focused meanwhile stops it.
+        let (typer, pasteboard, keys) = makeTyper(copied: "copied before")
+        pasteboard.access = .ask
+        keys.afterTyping = { [unowned keys] in keys.secureInput = .on }
+
+        XCTAssertThrowsError(try typer.paste(String(repeating: "a", count: 45))) {
+            XCTAssertEqual(PasteTyper.Failure.secureInput, $0 as? PasteTyper.Failure)
+        }
+
+        XCTAssertEqual([String(repeating: "a", count: 20)], keys.typed)
     }
 
     // MARK: The system's pasteboard and keyboard
@@ -383,6 +401,25 @@ final class PasteTyperTests: XCTestCase {
         XCTAssertEqual([promised], named.types)
     }
 
+    func testAPasteboardOfNothingButEmptyDataIsUnreadableAndNeverOverwritten() throws {
+        // How a refusal might read: the types are there, but not a byte of their data.
+        let named = NSPasteboard.withUniqueName()
+        defer { named.releaseGlobally() }
+        let item = NSPasteboardItem()
+        _ = item.setData(Data(), forType: .string)
+        _ = item.setData(Data(), forType: NSPasteboard.PasteboardType("app.thumbfree.tests.custom"))
+        _ = named.clearContents()
+        XCTAssertTrue(named.writeObjects([item]))
+        let changeCount = named.changeCount
+        let pasteboard = PasteTyper.SystemPasteboard(named)
+
+        let saved = pasteboard.save()
+        pasteboard.restore(saved)
+
+        XCTAssertEqual(.unreadable, saved)
+        XCTAssertEqual(changeCount, named.changeCount)
+    }
+
     func testThePasteKeyIsTheOneThatTypesVInTheLayout() throws {
         // Dvorak's V is QWERTY's full stop; "Dvorak – QWERTY ⌘" switches to QWERTY while ⌘ is held.
         for (layout, key) in [
@@ -398,6 +435,51 @@ final class PasteTyperTests: XCTestCase {
         let flags = PasteTyper.SystemKeys.eventFlags([.command, .shift])
         XCTAssertEqual(CGEventFlags([.maskCommand, .maskShift]).rawValue | 0x08 | 0x02, flags.rawValue)
         XCTAssertEqual(0, PasteTyper.SystemKeys.eventFlags([]).rawValue)
+    }
+
+    func testAKeyThatTypesTextCarriesItWithNoModifiersFromThisProcess() throws {
+        // Made, not posted, which needs no permission.
+        let text = Array("é👋!".utf16)
+        let typing = try XCTUnwrap(PasteTyper.SystemKeys.events(0, flags: [], characters: text))
+        let modifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift, .maskSecondaryFn]
+        let events: [(CGEvent, CGEventType)] = [(typing.down, .keyDown), (typing.up, .keyUp)]
+        for (event, expected) in events {
+            var length = 0
+            var units = [UniChar](repeating: 0, count: PasteTyper.unitsPerKey)
+            event.keyboardGetUnicodeString(
+                maxStringLength: units.count, actualStringLength: &length, unicodeString: &units)
+
+            XCTAssertEqual(text, Array(units[..<length]), "\(expected)")
+            XCTAssertEqual(expected, event.type)
+            XCTAssertEqual(0, event.getIntegerValueField(.keyboardEventKeycode), "\(expected)")
+            XCTAssertTrue(event.flags.isDisjoint(with: modifiers), "\(expected): \(event.flags)")
+            XCTAssertEqual(Int64(getpid()), event.getIntegerValueField(.eventSourceUnixProcessID), "\(expected)")
+        }
+
+        let command = PasteTyper.SystemKeys.eventFlags(.command)
+        let paste = try XCTUnwrap(PasteTyper.SystemKeys.events(CGKeyCode(kVK_ANSI_V), flags: command))
+        for event in [paste.down, paste.up] {
+            XCTAssertEqual(Int64(kVK_ANSI_V), event.getIntegerValueField(.keyboardEventKeycode))
+            XCTAssertTrue(event.flags.contains(.maskCommand))
+            XCTAssertEqual(Int64(getpid()), event.getIntegerValueField(.eventSourceUnixProcessID))
+        }
+    }
+
+    func testKeysGoOutOnlyWithThePermissionToPostEvents() {
+        let system = FakePermissionsSystem()
+        let keys = PasteTyper.SystemKeys(permissions: Permissions(system: system))
+
+        XCTAssertThrowsError(try keys.type("a")) {
+            XCTAssertEqual(PasteTyper.Failure.notAllowed, $0 as? PasteTyper.Failure)
+        }
+
+        XCTAssertThrowsError(try keys.post(.returnKey)) {
+            XCTAssertEqual(PasteTyper.Failure.notAllowed, $0 as? PasteTyper.Failure)
+        }
+
+        XCTAssertEqual(.postEvents, PasteTyper.Failure.notAllowed.permission)
+        XCTAssertNil(PasteTyper.Failure.secureInput.permission)
+        XCTAssertEqual([], system.prompts, "checking never asks")
     }
 
     // MARK: Helpers
@@ -490,11 +572,13 @@ private final class FakePasteboard: PasteTyper.Pasteboard {
 /// A keyboard whose ⌘V reads the fake pasteboard, as the app would.
 private final class FakeKeyPoster: PasteTyper.Keys {
     var allowed = true
-    var secureInput = false
+    var secureInput = FocusedField.SecureInput.off
     /// Held at the first checks, one more let go at each.
     var held: [PasteTyper.Modifiers] = []
     var heldForever: PasteTyper.Modifiers = []
     var afterPaste: (() -> Void)?
+    /// Runs after each key typed with characters of its own.
+    var afterTyping: (() -> Void)?
     private(set) var posted: [String] = []
     private(set) var pasted: [String] = []
     /// What each key typed with characters of its own carried.
@@ -530,6 +614,7 @@ private final class FakeKeyPoster: PasteTyper.Keys {
         log("type \(characters)")
         posted.append("type \(characters)")
         typed.append(characters)
+        afterTyping?()
     }
 }
 

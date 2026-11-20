@@ -8,6 +8,9 @@ final class FocusedFieldTests: XCTestCase {
     private let notes: pid_t = 11
     private let chrome: pid_t = 12
     private let slack: pid_t = 13
+    private let spotlight: pid_t = 14
+    private let safari: pid_t = 15
+    private let webContent: pid_t = 16
 
     func testATextAreaTakesLineBreaksAndGivesTheTextBeforeTheCursor() throws {
         let system = FakeAXSystem()
@@ -30,7 +33,7 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertFalse(field.isSecure)
         XCTAssertFalse(field.isSearch)
         XCTAssertFalse(field.isInWebPage)
-        XCTAssertFalse(field.secureEventInput)
+        XCTAssertEqual(.off, field.secureInput)
         XCTAssertEqual(
             FocusedField.App(processIdentifier: notes, bundleIdentifier: "com.apple.Notes", name: "Notes"), field.app)
         XCTAssertEqual("Shopping", field.windowTitle)
@@ -95,15 +98,21 @@ final class FocusedFieldTests: XCTestCase {
         }
     }
 
-    func testSecureEventInputIsReported() throws {
+    func testSecureInputIsReportedAndSoIsNotKnowingIt() throws {
         let system = FakeAXSystem()
-        system.secureEventInput = true
         system.focus = FakeAXField("AXTextField", in: system.window("Terminal", in: notes))
+        let states: [(FocusedField.SecureInput, String)] = [
+            (.on, "AXTextField single-line secure-input"), (.unknown, "AXTextField single-line secure-input-unknown"),
+        ]
+        for (secureInput, kind) in states {
+            system.secureInput = secureInput
 
-        let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
+            let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
 
-        XCTAssertTrue(field.secureEventInput)
-        XCTAssertFalse(field.isSecure)
+            XCTAssertEqual(secureInput, field.secureInput)
+            XCTAssertFalse(field.isSecure)
+            XCTAssertEqual(kind, field.kind)
+        }
     }
 
     func testTheTextBeforeTheCursorIsCountedInUTF16UnitsAsAppsCountIt() throws {
@@ -200,18 +209,25 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertNil(FocusedField.Reader(source: system).read())
     }
 
-    func testTheFocusComesFromTheAppInFrontWhenTheSystemWideElementHasNone() throws {
+    func testTheFocusComesFromTheAppTakingTheKeysWhenTheSystemWideElementHasNone() throws {
         let system = FakeAXSystem()
         let box = FakeAXField("AXTextField", in: system.window("Search", in: notes))
         system.focus = box
         system.systemWideFocus = false
         (system.application(notes) as? FakeAXField)?.focused = box
-        system.front = notes
+        system.front = slack
         let reader = FocusedField.Reader(source: system)
 
         let field = try XCTUnwrap(reader.read())
 
         XCTAssertEqual("AXTextField", field.role)
+        XCTAssertEqual(notes, field.app.processIdentifier)
+        XCTAssertEqual(true, reader.isSameField(field))
+
+        // When the system-wide element doesn't say which app takes the keys either, the app in front is asked.
+        system.systemWideApp = false
+        system.front = notes
+        XCTAssertEqual("AXTextField", reader.read()?.role)
         XCTAssertEqual(true, reader.isSameField(field))
     }
 
@@ -219,8 +235,8 @@ final class FocusedFieldTests: XCTestCase {
         let system = FakeAXSystem()
         let box = FakeAXField("AXTextArea", in: system.window("Busy", in: notes), [kAXValueAttribute: "Hello"])
         system.focus = box
-        // The focus, the process, the role and the subrole are answered; nothing after that.
-        system.answersLeft = 4
+        // The app taking the keys, its process, the focus, the role and the subrole are answered; nothing after that.
+        system.answersLeft = 5
 
         let field = try XCTUnwrap(FocusedField.Reader(source: system).read())
 
@@ -262,6 +278,62 @@ final class FocusedFieldTests: XCTestCase {
 
         system.front = slack
         XCTAssertEqual(false, reader.isSameField(field), "Slack in front")
+    }
+
+    func testABoxInAPanelThatTakesTheKeysWhileAnotherAppStaysInFrontIsStillTheSameBox() throws {
+        // Spotlight, Alfred, Raycast and notifications' reply boxes take the keys without coming to the front.
+        let system = FakeAXSystem()
+        system.apps[spotlight] = FocusedField.App(processIdentifier: spotlight, bundleIdentifier: "com.apple.Spotlight")
+        let box = FakeAXField("AXTextField", in: system.window("Spotlight", in: spotlight))
+        system.focus = box
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+
+        let field = try XCTUnwrap(reader.read())
+
+        XCTAssertEqual("com.apple.Spotlight", field.app.bundleIdentifier)
+        XCTAssertEqual(true, reader.isSameField(field))
+
+        system.focus = FakeAXField("AXTextArea", in: system.window("Shopping", in: notes))
+        XCTAssertEqual(false, reader.isSameField(field), "back in Notes")
+
+        // Without an answer, the app in front decides: Spotlight isn't it, so the focus may have gone.
+        system.focus = box
+        system.answering = false
+        XCTAssertEqual(false, reader.isSameField(field))
+    }
+
+    func testAWebPageDescribedByAHelperProcessBelongsToTheAppTakingTheKeys() throws {
+        // Safari's pages are described by WebKit's WebContent process, while Safari takes the keys.
+        let system = FakeAXSystem()
+        system.apps[safari] = FocusedField.App(processIdentifier: safari, bundleIdentifier: "com.apple.Safari")
+        system.apps[webContent] = FocusedField.App(
+            processIdentifier: webContent, bundleIdentifier: "com.apple.WebKit.WebContent")
+        let window = system.window("Inbox", in: safari)
+        let page = FakeAXField("AXWebArea", in: window, process: webContent)
+        let box = FakeAXField("AXTextArea", in: page, [kAXValueAttribute: "Hi Sam"])
+        box.selection = CFRange(location: 6, length: 0)
+        system.focus = box
+        system.keyApp = safari
+        system.front = safari
+        let reader = FocusedField.Reader(source: system)
+
+        let field = try XCTUnwrap(reader.read())
+
+        XCTAssertEqual(webContent, box.pid)
+        XCTAssertEqual("com.apple.Safari", field.app.bundleIdentifier)
+        XCTAssertEqual("Inbox", field.windowTitle)
+        XCTAssertTrue(field.isInWebPage)
+        XCTAssertEqual("Hi Sam", field.textBefore)
+        XCTAssertEqual(true, reader.isSameField(field))
+
+        system.focus = FakeAXField("AXTextField", in: page)
+        XCTAssertEqual(false, reader.isSameField(field), "another box in the page")
+
+        // When the system-wide element doesn't say which app takes the keys, the element's own process is all there is.
+        system.focus = box
+        system.systemWideApp = false
+        XCTAssertEqual(webContent, reader.read()?.app.processIdentifier)
     }
 
     func testChromiumIsWokenWhenItComesToTheFrontAndItsBoxReadOnceDescribed() throws {
@@ -439,8 +511,8 @@ final class FocusedFieldTests: XCTestCase {
         let system = FakeAXSystem()
         system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
         system.focus = FakeAXField("AXGroup", in: system.window("Docs", in: chrome))
-        // The focus, the process, the role and the subrole are answered, the parents aren't.
-        system.answersLeft = 4
+        // The app taking the keys, its process, the focus, the role and the subrole are answered, the parents aren't.
+        system.answersLeft = 5
 
         XCTAssertNil(FocusedField.Reader(source: system).read())
     }
@@ -450,6 +522,8 @@ final class FocusedFieldTests: XCTestCase {
         system.apps[slack] = FocusedField.App(processIdentifier: slack, isElectron: true)
         let window = system.window("general", in: slack)
         system.focus = FakeAXField("AXGroup", in: window)
+        // Which app is in front doesn't matter while Accessibility answers.
+        system.front = notes
         let reader = FocusedField.Reader(source: system)
         reader.wakesWebContent = false
         let field = try XCTUnwrap(reader.read())
@@ -480,11 +554,14 @@ private final class FakeAXField {
     var flags: [String: Bool] = [:]
     var asked: [String] = []
 
-    init(_ role: String?, subrole: String? = nil, in parent: FakeAXField?, _ strings: [String: String] = [:]) {
+    init(
+        _ role: String?, subrole: String? = nil, in parent: FakeAXField?, process: pid_t? = nil,
+        _ strings: [String: String] = [:]
+    ) {
         self.role = role
         self.subrole = subrole
         self.parent = parent
-        self.pid = parent?.pid ?? 0
+        self.pid = process ?? parent?.pid ?? 0
         self.strings = strings
     }
 
@@ -502,11 +579,15 @@ private final class FakeAXSystem: FocusedField.Accessibility {
     var focus: FakeAXField?
     /// The system-wide element says which element has the focus (some apps say so only through themselves).
     var systemWideFocus = true
+    /// The app taking the keys, as the system-wide element says; by default the focused element's.
+    var keyApp: pid_t?
+    /// The system-wide element says which app takes the keys.
+    var systemWideApp = true
     var answering = true
     var answersLeft = Int.max
     var unanswered = 0
     var apps: [pid_t: FocusedField.App] = [:]
-    var secureEventInput = false
+    var secureInput = FocusedField.SecureInput.off
     /// The app in front; by default the focused element's.
     var front: pid_t?
     /// Whether apps take the flags set on them.
@@ -534,6 +615,12 @@ private final class FakeAXSystem: FocusedField.Accessibility {
     func observeActivations(_ handler: @escaping @Sendable (pid_t) -> Void) -> AnyObject {
         activated = handler
         return NSObject()
+    }
+
+    func focusedApplication() throws -> AnyObject? {
+        try answer()
+        guard systemWideApp, let pid = keyApp ?? focus?.pid else { return nil }
+        return application(pid)
     }
 
     func focusedElement() throws -> AnyObject? {

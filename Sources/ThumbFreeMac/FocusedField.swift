@@ -7,7 +7,8 @@ import Foundation
 /// `FocusInspector`. These are the facts only: the rules that use them (which apps and pages get email layout,
 /// private windows, what History keeps) are the core's. Nothing read here is logged or kept.
 public struct FocusedField: Sendable {
-    /// The app the box is in.
+    /// The app the box is in, as you see it: the app taking the keys. That's Safari even where WebKit's helper process
+    /// describes the page, and Spotlight while the app before it stays in front.
     public struct App: Equatable, Sendable {
         public var processIdentifier: pid_t
         public var bundleIdentifier: String?
@@ -76,8 +77,8 @@ public struct FocusedField: Sendable {
     public let textBefore: String?
     /// False when the box gave no cursor: the text before it is then the end of its text.
     public let caretKnown: Bool
-    /// IsSecureEventInputEnabled(): a password is being typed somewhere, so nothing may be typed.
-    public let secureEventInput: Bool
+    /// IsSecureEventInputEnabled(): whether a password is being typed somewhere, when nothing may be typed.
+    public let secureInput: SecureInput
     let identity: Identity
     /// The web page and the window the box is in, to match it with the box once its page has described itself.
     let page: Element?
@@ -92,7 +93,12 @@ public struct FocusedField: Sendable {
         if isSecure { kind += " secure" }
         if isInWebPage { kind += " web" }
         if !isResolved { kind += " unresolved" }
-        if secureEventInput { kind += " secure-input" }
+        switch secureInput {
+        case .off: break
+        case .on: kind += " secure-input"
+        case .unknown: kind += " secure-input-unknown"
+        }
+
         return kind
     }
 }
@@ -102,6 +108,9 @@ extension FocusedField {
     /// (FakeAXSystem in the tests): the Accessibility API, with AXUIElements as elements, and which app is in front
     /// (NSWorkspace). A missing attribute is nil; a call that gets no answer throws `NoAnswer`.
     public protocol Accessibility: AnyObject {
+        /// The app accepting keyboard input (kAXFocusedApplicationAttribute, system-wide): Safari, not the WebKit
+        /// process that describes its pages; Spotlight, not the app left in front.
+        func focusedApplication() throws -> AnyObject?
         /// The element with the keyboard focus, in whichever app has it (kAXFocusedUIElementAttribute, system-wide).
         func focusedElement() throws -> AnyObject?
         func string(_ attribute: String, of element: AnyObject) throws -> String?
@@ -123,13 +132,14 @@ extension FocusedField {
         /// The same element (CFEqual).
         func isSame(_ element: AnyObject, as other: AnyObject) -> Bool
         func app(_ processIdentifier: pid_t) -> App
-        /// The app in front (NSWorkspace), known without asking the app anything.
+        /// The app in front (NSWorkspace), known without asking the app anything: for when Accessibility can't answer.
         var frontmostProcess: pid_t? { get }
         /// Calls `handler`, off the main thread, with each app that comes to the front (NSWorkspace's
-        /// didActivateApplicationNotification), for as long as the returned object is kept.
+        /// didActivateApplicationNotification), for as long as the returned object is kept. The main thread posts
+        /// the notification and waits for its observers, so it mustn't wait for `handler` too.
         func observeActivations(_ handler: @escaping @Sendable (pid_t) -> Void) -> AnyObject
-        /// IsSecureEventInputEnabled().
-        var secureEventInput: Bool { get }
+        /// IsSecureEventInputEnabled(), asked on the main thread (`SecureInput.current`).
+        var secureInput: SecureInput { get }
     }
 
     /// Reads the focused box when a dictation starts (`read`), again once a web page has described it (`resolved`),
@@ -175,7 +185,8 @@ extension FocusedField {
 
         /// Wakes Chromium and Electron apps before any dictation: the app in front now, then each one as it comes to
         /// the front. Chromium (and Electron since 38) turns its page descriptions on 2 s after it's asked, too late
-        /// for a dictation starting then. Call it once, when ThumbFree starts; the wakes happen off the main thread.
+        /// for a dictation starting then. Call it once, when ThumbFree starts; the wakes happen off the main thread,
+        /// which never waits for them (an app still launching can take a second to answer).
         public func startWaking() {
             let started: Bool = lock.withLock {
                 guard activations == nil else { return false }
@@ -211,15 +222,15 @@ extension FocusedField {
         }
 
         /// `start` once its page has described it: when `start` isn't resolved, the box with the focus now if it's a
-        /// text box in the same page (or, without a page, the same window); nil while there's none. Call it just
-        /// before the first piece is typed. A resolved `start` comes back as it is.
+        /// text box in the same app and page (or, without a page, the same window); nil while there's none. Call it
+        /// just before the first piece is typed. A resolved `start` comes back as it is.
         public func resolved(_ start: FocusedField) -> FocusedField? {
             if start.isResolved {
                 return start
             }
 
-            guard source.frontmostProcess == start.app.processIdentifier, let now = snapshot(waking: false),
-                  now.isResolved, now.app.processIdentifier == start.app.processIdentifier else { return nil }
+            guard let now = snapshot(waking: false), now.isResolved,
+                  now.app.processIdentifier == start.app.processIdentifier else { return nil }
             switch start.identity {
             case .box:
                 return nil
@@ -231,31 +242,38 @@ extension FocusedField {
         }
 
         /// True when the focus is still in `start`'s box (the same AXUIElement, CFEqual; while its page hasn't
-        /// described it, the same page or window), false when it's somewhere else. Nil only when the app is still in
-        /// front but Accessibility can't tell which element has the focus, as Windows answers null only in the same
-        /// window. Never wakes anything.
+        /// described it, the same page or window), false when Accessibility says it's somewhere else. The app in front
+        /// matters only when Accessibility can't tell (an app that doesn't answer): nil while `start`'s app is still in
+        /// front, as Windows answers null only in the same window, else false. A box in a panel that takes the keys
+        /// while another app stays in front (Spotlight, a notification's reply) is still the same box. Never wakes
+        /// anything.
         public func isSameField(_ start: FocusedField) -> Bool? {
-            guard source.frontmostProcess == start.app.processIdentifier else { return false }
             var asking = Asking(source)
-            guard let focused = focusedElement(&asking) else { return asking.answered ? false : nil }
-            guard let pid = asking.ask({ try $0.processIdentifier(of: focused) }) else { return nil }
-            guard pid == start.app.processIdentifier else { return false }
+            guard let found = focus(&asking) else {
+                if asking.answered {
+                    return false
+                }
 
+                return source.frontmostProcess == start.app.processIdentifier ? nil : false
+            }
+
+            guard found.pid == start.app.processIdentifier else { return false }
+            let focused = found.element
             switch start.identity {
             case .box(let box):
                 return source.isSame(focused, as: box.object)
             case .page(let page):
                 let role = asking.ask { try $0.string(kAXRoleAttribute, of: focused) }
-                let found = containers(of: focused, role: role, pid: pid, &asking)
-                if let pageNow = found.page {
+                let around = containers(of: focused, role: role, pid: found.pid, &asking)
+                if let pageNow = around.page {
                     return source.isSame(pageNow, as: page.object)
                 }
 
                 return asking.answered ? false : nil
             case .window(let window):
                 let role = asking.ask { try $0.string(kAXRoleAttribute, of: focused) }
-                let found = containers(of: focused, role: role, pid: pid, &asking)
-                if let windowNow = found.window {
+                let around = containers(of: focused, role: role, pid: found.pid, &asking)
+                if let windowNow = around.window {
                     return source.isSame(windowNow, as: window.object)
                 }
 
@@ -265,8 +283,9 @@ extension FocusedField {
 
         private func snapshot(waking: Bool) -> FocusedField? {
             var asking = Asking(source)
-            guard let element = focusedElement(&asking),
-                  let pid = asking.ask({ try $0.processIdentifier(of: element) }), pid != ownProcess else { return nil }
+            guard let found = focus(&asking), found.pid != ownProcess else { return nil }
+            let element = found.element
+            let pid = found.pid
 
             let app = source.app(pid)
             let web = Self.webContent(of: app)
@@ -305,19 +324,36 @@ extension FocusedField {
             return FocusedField(
                 app: app, windowTitle: title, windowFrame: frame, role: role, subrole: subrole, isSecure: secure,
                 isSearch: search, isInWebPage: page != nil, isResolved: resolved, takesLineBreaks: lines,
-                textBefore: before, caretKnown: caretKnown, secureEventInput: source.secureEventInput,
+                textBefore: before, caretKnown: caretKnown, secureInput: source.secureInput,
                 identity: identity, page: page.map(Element.init), window: window.map(Element.init))
         }
 
-        /// The element with the keyboard focus: from the system-wide element, else from the app in front, which some
-        /// apps answer when the system-wide element doesn't.
-        private func focusedElement(_ asking: inout Asking) -> AnyObject? {
+        /// The element with the keyboard focus, and the app it's in as you see it: the app taking the keys (the
+        /// system-wide kAXFocusedApplicationAttribute), else the element's own process. Safari takes the keys while
+        /// WebKit's helper process describes its pages, and Spotlight's box or a notification's reply takes them while
+        /// another app stays in front. Nil when nothing has the focus or Accessibility can't tell (`asking.answered`
+        /// says which).
+        private func focus(_ asking: inout Asking) -> (element: AnyObject, pid: pid_t)? {
+            let app = asking.ask { try $0.focusedApplication() }
+            let appProcess = app.flatMap { app in asking.ask { try $0.processIdentifier(of: app) } }
+            guard let element = focusedElement(in: appProcess, &asking),
+                  let pid = appProcess ?? asking.ask({ try $0.processIdentifier(of: element) }) else { return nil }
+            return (element, pid)
+        }
+
+        /// The element with the keyboard focus: from the system-wide element, else from the app taking the keys (or,
+        /// when that isn't known either, the app in front), which some apps answer when the system-wide element
+        /// doesn't.
+        private func focusedElement(in appProcess: pid_t?, _ asking: inout Asking) -> AnyObject? {
             if let focused = asking.ask({ try $0.focusedElement() }) {
                 return focused
             }
 
-            guard asking.answered, let front = source.frontmostProcess, front != ownProcess else { return nil }
-            return asking.ask { try $0.element(kAXFocusedUIElementAttribute, of: $0.application(front)) }
+            guard asking.answered, let owner = appProcess ?? source.frontmostProcess, owner != ownProcess else {
+                return nil
+            }
+
+            return asking.ask { try $0.element(kAXFocusedUIElementAttribute, of: $0.application(owner)) }
         }
 
         /// The web page around `element` (the nearest AXWebArea, itself included) and its window, from its parents.

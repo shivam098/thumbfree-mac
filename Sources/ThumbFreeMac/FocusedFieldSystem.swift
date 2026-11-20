@@ -12,33 +12,39 @@ extension FocusedField {
 
         private let systemWide = AXUIElementCreateSystemWide()
 
-        /// Where apps coming to the front are handled: one at a time, off the main thread.
-        private let activationQueue: OperationQueue = {
-            let queue = OperationQueue()
-            queue.maxConcurrentOperationCount = 1
-            queue.qualityOfService = .userInitiated
-            return queue
-        }()
+        /// Where apps coming to the front are woken: one at a time, off the main thread.
+        private let activationQueue = DispatchQueue(label: "app.thumbfree.mac.activations", qos: .userInitiated)
 
         init() {
             _ = AXUIElementSetMessagingTimeout(systemWide, Self.timeout)
         }
 
-        var secureEventInput: Bool { SecureInput.isOn() }
+        var secureInput: SecureInput { SecureInput.current() }
 
         var frontmostProcess: pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
 
+        /// The observer runs on the thread that posts (the main thread), which waits for it: with an operation queue,
+        /// it would wait for the whole wake too. So only the app is read there, and the wake goes to
+        /// `activationQueue`.
         func observeActivations(_ handler: @escaping @Sendable (pid_t) -> Void) -> AnyObject {
             let center = NSWorkspace.shared.notificationCenter
+            let queue = activationQueue
             let token = center.addObserver(
-                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: activationQueue
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil
             ) { notification in
-                if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-                    handler(app.processIdentifier)
+                let key = NSWorkspace.applicationUserInfoKey
+                guard let app = notification.userInfo?[key] as? NSRunningApplication else { return }
+                let pid = app.processIdentifier
+                queue.async {
+                    handler(pid)
                 }
             }
 
             return Observation(center, token)
+        }
+
+        func focusedApplication() throws -> AnyObject? {
+            try element(kAXFocusedApplicationAttribute, of: systemWide)
         }
 
         func focusedElement() throws -> AnyObject? {
@@ -173,30 +179,37 @@ extension FocusedField {
         }
     }
 
-    /// IsSecureEventInputEnabled(), asked on the main thread, since CarbonEventsCore.h marks it not thread safe. From
-    /// another thread it waits for the main thread's answer, `wait` at most; without one it says yes, so nothing is
-    /// typed while that can't be told.
-    enum SecureInput {
+    /// IsSecureEventInputEnabled(): whether a password is being typed somewhere (a password box, Terminal's Secure
+    /// Keyboard Entry, a password manager), when nothing may be typed.
+    public enum SecureInput: Equatable, Sendable {
+        case off
+        case on
+        /// It couldn't be told: the main thread, where it's asked, didn't answer in time.
+        case unknown
+
+        /// How long another thread waits for the main thread's answer.
         static let wait: TimeInterval = 1
 
-        static func isOn() -> Bool {
+        /// Asked on the main thread, since CarbonEventsCore.h marks IsSecureEventInputEnabled not thread safe. From
+        /// another thread this waits for the main thread's answer, `wait` at most, and is `unknown` without one.
+        public static func current() -> SecureInput {
             if Thread.isMainThread {
-                return IsSecureEventInputEnabled()
+                return IsSecureEventInputEnabled() ? .on : .off
             }
 
             let answer = Answer()
             let answered = DispatchSemaphore(value: 0)
             DispatchQueue.main.async {
-                answer.isOn = IsSecureEventInputEnabled()
+                answer.value = IsSecureEventInputEnabled() ? .on : .off
                 answered.signal()
             }
 
-            return answered.wait(timeout: .now() + wait) == .success ? answer.isOn : true
+            return answered.wait(timeout: .now() + wait) == .success ? answer.value : .unknown
         }
 
         /// Written on the main thread before the semaphore is signalled, read after it.
         private final class Answer: @unchecked Sendable {
-            var isOn = true
+            var value = SecureInput.unknown
         }
     }
 }

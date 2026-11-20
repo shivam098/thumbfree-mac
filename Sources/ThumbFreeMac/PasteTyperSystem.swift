@@ -33,8 +33,8 @@ extension PasteTyper {
         }
 
         /// Every item, each with every type whose data can be read; a type that can't (a promise its app no longer
-        /// keeps) is skipped, as on Windows. When nothing at all can be read, the pasteboard is unreadable, never
-        /// empty: it isn't emptied afterwards.
+        /// keeps) is skipped, as on Windows. When nothing can be read, or nothing but empty data (as a refusal might
+        /// read), the pasteboard is unreadable, never empty: it isn't emptied or overwritten afterwards.
         public func save() -> Saved {
             guard let types = pasteboard.types, !types.isEmpty else { return .empty }
             var items: [[Contents.Representation]] = []
@@ -48,7 +48,8 @@ extension PasteTyper {
                 }
             }
 
-            return items.isEmpty ? .unreadable : .items(Contents(items: items))
+            let readable = items.joined().contains { !$0.data.isEmpty }
+            return readable ? .items(Contents(items: items)) : .unreadable
         }
 
         /// The text and the markers, for this Mac only: Universal Clipboard doesn't offer it to your other devices (as
@@ -88,17 +89,24 @@ extension PasteTyper {
         }
     }
 
-    /// The keyboard: the modifier keys held now, and keys sent with CGEvent, which needs the permission to control the
-    /// computer. ⌘V is the key that types "v" with ⌘ in the keyboard layout in use (Dvorak's is QWERTY's "."), as
-    /// Windows' Ctrl+V is the V key of the layout in use. Keys sent from ThumbFree carry its process identifier, so
-    /// its own dictation key ignores them.
+    /// The keyboard: the modifier keys held now, and keys sent with CGEvent, which needs the permission to post events
+    /// (`Permissions.Kind.postEvents`). ⌘V is the key that types "v" with ⌘ in the keyboard layout in use (Dvorak's
+    /// is QWERTY's "."), as Windows' Ctrl+V is the V key of the layout in use. Keys sent from ThumbFree carry its
+    /// process identifier, so its own dictation key ignores them.
     public final class SystemKeys: NSObject, Keys, @unchecked Sendable {
+        private let permissions: Permissions
         private let lock = NSLock()
         private var pasteKey = CGKeyCode(kVK_ANSI_V)
 
+        public override convenience init() {
+            self.init(permissions: Permissions())
+        }
+
         /// Text Input Sources answers on the main thread only, so the paste key is found there, now or as soon as the
         /// main thread is free, and again whenever the keyboard layout changes.
-        public override init() {
+        /// - Parameter permissions: Where the permission to post events is checked, before each key.
+        public init(permissions: Permissions) {
+            self.permissions = permissions
             super.init()
             if Thread.isMainThread {
                 watchLayout()
@@ -124,15 +132,15 @@ extension PasteTyper {
             return held
         }
 
-        public var secureInput: Bool { FocusedField.SecureInput.isOn() }
+        public var secureInput: FocusedField.SecureInput { FocusedField.SecureInput.current() }
 
         public var pasteChord: Chord {
             Chord(key: lock.withLock { pasteKey }, modifiers: .command)
         }
 
         /// Key down and up, with the chord's modifier flags only: nothing else held reaches the app (the typer waits
-        /// for held keys to be let go first). Without the permission to control the computer macOS would drop them
-        /// silently, so nothing goes out and `Failure.notAllowed` is thrown.
+        /// for held keys to be let go first). Without the permission to post events macOS would drop them silently,
+        /// so nothing goes out and `Failure.notAllowed` is thrown.
         public func post(_ chord: Chord) throws {
             try send(chord.key, flags: Self.eventFlags(chord.modifiers))
         }
@@ -156,25 +164,38 @@ extension PasteTyper {
             return CGEventFlags(rawValue: flags)
         }
 
-        /// The keys the typer sends: needs PostEvent access (CGPreflightPostEventAccess), which isn't the same as
-        /// being trusted for Accessibility.
+        /// Posts the key down and up that `events` makes, with the permission to post events only: without it macOS
+        /// would drop them silently.
         private func send(_ key: CGKeyCode, flags: CGEventFlags, characters: [UniChar] = []) throws {
-            guard CGPreflightPostEventAccess() else { throw Failure.notAllowed }
-            let source = CGEventSource(stateID: .combinedSessionState)
-            guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else {
+            guard permissions.status(.postEvents) == .granted else { throw Failure.notAllowed }
+            guard let events = Self.events(key, flags: flags, characters: characters) else {
                 throw Failure.keysUnavailable
             }
 
-            if !characters.isEmpty {
-                down.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
-                up.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
+            events.down.post(tap: .cgSessionEventTap)
+            events.up.post(tap: .cgSessionEventTap)
+        }
+
+        /// The key down and up for `key`, with `flags` as their only modifiers, carrying `characters`
+        /// (CGEventKeyboardSetUnicodeString) when there are some, and marked as this process's
+        /// (eventSourceUnixProcessID), which ThumbFree's own dictation key ignores. Making them needs no permission.
+        static func events(_ key: CGKeyCode, flags: CGEventFlags, characters: [UniChar] = [])
+            -> (down: CGEvent, up: CGEvent)?
+        {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { return nil }
+            let process = Int64(ProcessInfo.processInfo.processIdentifier)
+            for event in [down, up] {
+                if !characters.isEmpty {
+                    event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
+                }
+
+                event.flags = flags
+                event.setIntegerValueField(.eventSourceUnixProcessID, value: process)
             }
 
-            down.flags = flags
-            up.flags = flags
-            down.post(tap: .cgSessionEventTap)
-            up.post(tap: .cgSessionEventTap)
+            return (down, up)
         }
 
         /// Finds the paste key now and whenever the keyboard layout changes. ThumbFree is almost never the active app,

@@ -12,7 +12,8 @@ built by [`.github/workflows/engines.yml`](.github/workflows/engines.yml) from t
 [`engines-whisper-1.9.5-2`](https://github.com/shivam098/thumbfree-mac/releases/tag/engines-whisper-1.9.5-2) releases.
 Each engine's zip has its notice next to the xcframework, `CSherpaOnnx-NOTICE.txt` and `CWhisper-NOTICE.txt` (also
 attached to the releases): the license texts of everything below that it links in, with ONNX Runtime's own third-party
-notices. The build checks that the notice covers every library whose code it finds in the engine.
+notices. The build checks that the notice covers every library whose code it finds in the engine. The app carries this
+file and both notices in `ThumbFree.app/Contents/Resources` (`scripts/make-app.sh`).
 
 | Component | Used for | License |
 |---|---|---|

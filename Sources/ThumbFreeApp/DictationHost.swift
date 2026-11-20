@@ -63,9 +63,13 @@ public final class DictationHost: @unchecked Sendable {
     private let formatter: LockedValue<DictationFormatter>
     private let current = LockedValue<Dictation?>(nil)
     private let active = LockedValue(0)
+    private let quitWaited = LockedValue(false)
     private var started = false
     private var idleWork: DispatchWorkItem?
     private var settingsToken: ObservationToken?
+
+    /// Every dictation from its start to its end, by identity, for quitting (`finishForQuit`). Guarded by `lock`.
+    private var inFlight: [ObjectIdentifier: Dictation] = [:]
 
     /// Capture thread only.
     private var lastLevelTime: TimeInterval = 0
@@ -210,6 +214,7 @@ public final class DictationHost: @unchecked Sendable {
 
         current.value = d
         active.update { $0 += 1 }
+        lock.withLock { inFlight[ObjectIdentifier(d)] = d }
         cancelIdleUnload()
         sounds.play(.startTyping)
         postActivity(DictationLabels.listening)
@@ -276,6 +281,7 @@ public final class DictationHost: @unchecked Sendable {
         }
 
         active.update { $0 += 1 }
+        lock.withLock { inFlight[ObjectIdentifier(d)] = d }
         let done = Pending<DictationOutcome>()
         enqueue { [self] in
             if live {
@@ -291,7 +297,8 @@ public final class DictationHost: @unchecked Sendable {
         return done
     }
 
-    /// Stops everything (C#'s Dispose): the recording, the queue (after what it's doing, 5 s at most) and the models.
+    /// Stops everything (C#'s Dispose): the recording, the queue (after what it's doing, 5 s at most, or a moment once
+    /// `finishForQuit` has waited for it) and the models.
     public func close() {
         settingsToken?.cancel()
         if let d = current.value {
@@ -305,7 +312,7 @@ public final class DictationHost: @unchecked Sendable {
         start()
         let done = DispatchSemaphore(value: 0)
         queue.async { done.signal() }
-        if done.wait(timeout: .now() + 5) == .timedOut {
+        if done.wait(timeout: .now() + (quitWaited.value ? 0.5 : 5)) == .timedOut {
             Log.warn("typing queue still busy at exit")
         }
 
@@ -313,6 +320,66 @@ public final class DictationHost: @unchecked Sendable {
         speech.close()
         audio.close()
         sounds.close()
+    }
+
+    /// A dictation is being recorded, transcribed or typed.
+    public var isBusy: Bool { active.value > 0 }
+
+    /// Quitting (`AppController`): the dictations already finishing get `timeout` to be transcribed and typed, as
+    /// Windows types one in the moment it waits when it exits. They're waited for on another thread, so the main thread
+    /// stays free: typing asks it about Secure Input. One whose text is known but isn't typed by then is kept, as a
+    /// dictation whose box changed is: in History when History keeps it, else on the pasteboard, which outlives
+    /// ThumbFree, and a notification (delivered before `whenDone`) says where. Then `whenDone` runs on the UI thread.
+    /// Cancel a recording first: Windows drops one when it exits.
+    public func finishForQuit(timeout: TimeInterval, then whenDone: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let deadline = Date(timeIntervalSinceNow: timeout)
+            while active.value > 0 && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+
+            let left = keepUnfinished()
+            quitWaited.value = true
+            post { [self] in
+                if !left.isEmpty, let notifier = services.notifier {
+                    let notInHistory = left.filter { !$0.inHistory }.map(\.text)
+                    if !notInHistory.isEmpty {
+                        services.environment.copyText(notInHistory.joined(separator: "\n\n"))
+                    }
+
+                    notifier.showKeptAtQuit(onPasteboard: !notInHistory.isEmpty)
+                    notifier.waitForDelivery(timeout: 1)
+                }
+
+                whenDone()
+            }
+        }
+    }
+
+    /// When ThumbFree quits: the dictations whose text is known but isn't typed yet are kept (History, unless it leaves
+    /// them out, and samples), and nothing more of them is typed. Returns their text, and whether History has it.
+    private func keepUnfinished() -> [(text: String, inHistory: Bool)] {
+        let dictations = lock.withLock { Array(inFlight.values) }.sorted { $0.startTime < $1.startTime }
+        var left: [(text: String, inHistory: Bool)] = []
+        for d in dictations where !d.refused.value {
+            guard let end = d.gate.withLock({ d.end }) else {
+                if !d.cancelled.value {
+                    Log.warn("dictation \(d.id): ThumbFree quit before it was transcribed")
+                }
+
+                continue
+            }
+
+            if d.kept.exchange(true) {
+                continue
+            }
+
+            Log.warn("dictation \(d.id): ThumbFree quit before it was typed; kept")
+            keep(d, end)
+            left.append((text: end.text, inHistory: !end.info.private && services.current.keepHistory))
+        }
+
+        return left
     }
 
     /// The model that re-reads the newest audio while you speak (for live typing, or only for the pill), or nil.
@@ -667,7 +734,20 @@ public final class DictationHost: @unchecked Sendable {
         }
 
         guard let typing = liveTyping(d), !(d.stopped.value && d.id != 0) else { return }
-        let step = typing.update(phrases, partial)
+        var step = typing.update(phrases, partial)
+        if !step.type.isEmpty && d.provisional {
+            // The first piece is about to be typed into a web page's box that hadn't described itself: it's read again
+            // now, and the dictation laid out for it, since nothing has been typed yet.
+            guard let resolved = resolveBeforeTyping(d) else {
+                showPreview(nil)
+                return
+            }
+
+            if resolved !== typing {
+                step = resolved.update(phrases, partial)
+            }
+        }
+
         showPreview(step.pending)
         if !step.type.isEmpty {
             typeIntoField(d, step.type)
@@ -675,7 +755,7 @@ public final class DictationHost: @unchecked Sendable {
     }
 
     /// The live typing of `d`, once its text box is known (read through the Accessibility API when it started). Nil
-    /// for a password field.
+    /// for a password field, which refuses the dictation.
     private func liveTyping(_ d: Dictation) -> LiveTyping? {
         if d.typing != nil || d.refused.value {
             return d.typing
@@ -684,11 +764,9 @@ public final class DictationHost: @unchecked Sendable {
         var field = d.fieldRead.wait() ?? nil
         if let start = field, !start.isResolved {
             // A web page that hadn't described its box when the dictation started (the Mac's Chromium and Electron
-            // apps): read it again now, before the first piece is typed.
-            if let resolved = fields.readAgain(start) {
-                Log.info("dictation \(d.id): the web page's box read once it was described")
-                field = resolved
-            }
+            // apps do it about 2 s after they're woken): the live typing is provisional until the box is read again,
+            // right before the first piece is typed (`resolveBeforeTyping`).
+            d.provisional = true
         } else if let start = field, let window = d.window, guarded.typed != d.typedAtRead,
                   desktop.foregroundWindow()?.handle == window.handle {
             // Typing since the box was read (the end of the previous dictation) changed the text before the cursor:
@@ -706,13 +784,12 @@ public final class DictationHost: @unchecked Sendable {
         d.field = field
 
         // A box the Accessibility API can't read is treated as one that takes line breaks, as on Windows: "new line"
-        // presses the app's new-line keys (Shift+Enter in chat apps). A browser window that says it's private stays
-        // private.
-        d.info = field?.fieldInfo ?? FieldInfo(
-            multiLine: true,
-            private: d.window.map { FieldRules.isPrivateWindow(d.app ?? fields.app(of: $0), title: $0.title) } ?? false)
+        // presses the app's new-line keys (Shift+Enter in chat apps). Its window's title isn't known then, so in a
+        // browser it counts as a private window, which History leaves out (`PrivateWindows`).
+        d.info = field?.fieldInfo
+            ?? FieldInfo(multiLine: true, private: d.app.map { PrivateWindows.mayBePrivate($0, title: nil) } ?? false)
         if d.info.password {
-            d.refused.value = true
+            refuseLive(d)
             return nil
         }
 
@@ -721,12 +798,50 @@ public final class DictationHost: @unchecked Sendable {
         }
 
         let before = field?.textBefore.map { ", \($0.utf16.count) chars before" } ?? ""
-        Log.info("dictation \(d.id) field: \(field?.kind ?? "unknown")\(before)")
-        let typing = LiveTyping(
-            d.formatter,
-            LiveTypingContext(textBefore: field?.textBefore, field: d.info, live: d.live, smartFormatting: d.smart))
+        let kind = field?.kind ?? (d.info.private ? "unknown, private-no-title" : "unknown")
+        Log.info("dictation \(d.id) field: \(kind)\(before)")
+        let typing = newLiveTyping(d, field)
         d.typing = typing
         return typing
+    }
+
+    /// Right before the first piece is typed into a web page's box that hadn't described itself when the dictation
+    /// started: the box is read again and, once it's there, the live typing starts over for it (the text before the
+    /// cursor, whether it takes line breaks, and the box itself for the same-box check). Nothing has been typed, so
+    /// nothing changes on the screen. Nil for a password box, which refuses the dictation.
+    private func resolveBeforeTyping(_ d: Dictation) -> LiveTyping? {
+        guard d.provisional, let start = d.field else { return d.typing }
+        d.provisional = false
+        guard let resolved = fields.readAgain(start) else {
+            Log.info("dictation \(d.id): the web page still hasn't described its box; typing into the page")
+            return d.typing
+        }
+
+        Log.info("dictation \(d.id): the web page's box read once it was described: \(resolved.kind)")
+        d.field = resolved
+        d.info = resolved.fieldInfo
+        if d.info.password {
+            d.typing = nil
+            refuseLive(d)
+            return nil
+        }
+
+        let typing = newLiveTyping(d, resolved)
+        d.typing = typing
+        return typing
+    }
+
+    private func newLiveTyping(_ d: Dictation, _ field: DictationField?) -> LiveTyping {
+        LiveTyping(
+            d.formatter,
+            LiveTypingContext(textBefore: field?.textBefore, field: d.info, live: d.live, smartFormatting: d.smart))
+    }
+
+    /// The dictation's box turned out to be a password field, read on the typing queue: it's refused, and its
+    /// recording stops, as for one found when it started (`refuse` says so once).
+    private func refuseLive(_ d: Dictation) {
+        d.refused.value = true
+        post { [self] in refuse(d) }
     }
 
     /// Types into the dictation's own text box only. The box is checked right before each paste or key press, after
@@ -855,13 +970,14 @@ public final class DictationHost: @unchecked Sendable {
             }
 
             box.insert(practiced)
-            keep(d, audio, raw, practiced, app: nil)
+            d.kept.value = true
+            keep(d, Dictation.Ending(audio: audio, raw: raw, text: practiced, info: d.info, app: nil))
             report(.success, "Typed.", heard: practiced)
             outcome = DictationOutcome(text: practiced, typedAll: true, kept: false, problem: nil)
             return outcome
         }
 
-        guard let typing = liveTyping(d) else {
+        guard var typing = liveTyping(d) else {
             if !d.refusalShown.exchange(true) {
                 report(.warning, Self.passwordRefusal)
             }
@@ -870,7 +986,24 @@ public final class DictationHost: @unchecked Sendable {
             return outcome
         }
 
-        let rest = typing.finish(phrases)
+        var rest = typing.finish(phrases)
+        if d.provisional && !rest.isEmpty {
+            // Nothing was typed while speaking: the end is the first piece, so the web page's box is read again now.
+            guard let resolved = resolveBeforeTyping(d) else {
+                if !d.refusalShown.exchange(true) {
+                    report(.warning, Self.passwordRefusal)
+                }
+
+                outcome.problem = "password field"
+                return outcome
+            }
+
+            if resolved !== typing {
+                typing = resolved
+                rest = typing.finish(phrases)
+            }
+        }
+
         let text = typing.finalText
         if text.isEmpty {
             report(.info, "I didn't catch anything.")
@@ -884,20 +1017,33 @@ public final class DictationHost: @unchecked Sendable {
             Log.info("dictation \(d.id): typed without the final layout (it would have changed typed words)")
         }
 
+        // What quitting keeps if this isn't typed in time (`keepUnfinished`).
+        let ending = Dictation.Ending(audio: audio, raw: raw, text: text, info: d.info, app: d.field?.app ?? d.app)
+        d.gate.withLock { d.end = ending }
         if !rest.isEmpty {
             typeIntoField(d, rest)
         }
 
         if d.refused.value {
             // A password field after all: nothing is offered for copying or kept.
+            d.gate.withLock { d.end = nil }
             outcome.problem = "password field"
+            return outcome
+        }
+
+        if d.kept.exchange(true) {
+            // ThumbFree was quitting, and kept it before it could be typed.
+            outcome = DictationOutcome(text: text, typedAll: false, kept: true, problem: nil)
             return outcome
         }
 
         if let reason = d.detachReason {
             inserter.lastText = text
             services.notifier?.showUntyped(text, reason: reason)
-            report(.warning, "\(reason) Your dictation is safe: click the notification to copy it.")
+            let copy = services.environment.notificationsEnabled()
+                ? "click its notification, or choose Copy the text that wasn't typed in the menu bar"
+                : "choose Copy the text that wasn't typed in the menu bar"
+            report(.warning, "\(reason) Your dictation is safe: \(copy).")
             outcome = DictationOutcome(text: text, typedAll: false, kept: true, problem: nil)
         } else {
             inserter.lastText = typing.text
@@ -905,23 +1051,25 @@ public final class DictationHost: @unchecked Sendable {
             outcome = DictationOutcome(text: text, typedAll: true, kept: false, problem: nil)
         }
 
-        keep(d, audio, raw, text, app: d.field?.app ?? d.app)
+        keep(d, ending)
         return outcome
     }
 
-    /// History (never from password fields, nor from windows known to be private) and, when opted in, a sample (never
-    /// from password fields or web browsers: `SampleStore`).
-    private func keep(_ d: Dictation, _ audio: [Float], _ raw: String, _ text: String, app: TargetApp?) {
-        if !d.info.private {
-            services.history.add(text, app: app?.name, passwordField: d.info.password)
+    /// History (never from password fields, nor from private windows or browser windows that can't be told apart from
+    /// them: `PrivateWindows`) and, when opted in, a sample (never from password fields or web browsers:
+    /// `SampleStore`).
+    private func keep(_ d: Dictation, _ ending: Dictation.Ending) {
+        if !ending.info.private {
+            services.history.add(ending.text, app: ending.app?.name, passwordField: ending.info.password)
         }
 
         services.samples.save(
-            audio, recognized: raw, typed: text, model: d.spec, passwordField: d.info.password || d.info.private,
-            app: app)
+            ending.audio, recognized: ending.raw, typed: ending.text, model: d.spec,
+            passwordField: ending.info.password || ending.info.private, app: ending.app)
     }
 
     private func done(_ d: Dictation) {
+        lock.withLock { _ = inFlight.removeValue(forKey: ObjectIdentifier(d)) }
         let left: Int = active.update { count in
             count -= 1
             return count
@@ -1122,6 +1270,16 @@ final class Dictation: @unchecked Sendable {
     let updateQueued = LockedValue(false)
     let refusalShown = LockedValue(false)
 
+    /// History, samples and the notification have it (or ThumbFree quitting has kept it): set by whichever got there
+    /// first, so it's kept once.
+    let kept = LockedValue(false)
+
+    let startTime = ProcessInfo.processInfo.systemUptime
+
+    /// What the end of the dictation keeps, once its text is known and before the rest of it is typed; quitting keeps
+    /// it if it isn't typed in time (`DictationHost.finishForQuit`). Guarded by `gate`.
+    var end: Ending?
+
     let id: Int
     let spec: ModelSpec
 
@@ -1166,6 +1324,18 @@ final class Dictation: @unchecked Sendable {
     var typing: LiveTyping?
     /// Why nothing more is typed into the box; the dictation is then kept for copying.
     var detachReason: String?
+    /// The live typing was laid out for a web page's box that hadn't described itself: the box is read again right
+    /// before the first piece is typed (`DictationHost.resolveBeforeTyping`).
+    var provisional = false
+
+    /// What History and samples keep of a dictation.
+    struct Ending {
+        var audio: [Float]
+        var raw: String
+        var text: String
+        var info: FieldInfo
+        var app: TargetApp?
+    }
 
     init(
         id: Int, spec: ModelSpec, settings: AppSettings, formatter: DictationFormatter, window: WindowInfo?,

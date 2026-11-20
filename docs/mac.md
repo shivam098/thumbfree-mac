@@ -116,11 +116,31 @@ This page is the Mac side: how each feature is built here, and in what order.
   changed, or the typing was refused (ThumbFree isn't allowed to type, Secure Input is on, something else kept being
   copied). Clicking the notification, or its Copy button, copies the dictation, and so does the menu bar's "Copy the
   text that wasn't typed". macOS asks for permission to show them at the first dictation, not at launch.
-- Settings in `~/Library/Application Support/ThumbFree/settings.json`, and History and opt-in samples in its
-  `Dictations.noindex` folder, in the same formats as Windows. Spotlight leaves out folders whose names end in
-  `.noindex` (Windows marks history.txt "not content indexed"); a `.metadata_never_index` file in the folder no longer
-  does that on recent macOS. Nothing from password fields; samples never from web browsers.
-- Logs, in `~/Library/Logs/ThumbFree`, hold timings and error names, never your words.
+- **Quitting** while a dictation is being transcribed or typed waits for it, 10 s at most, with the main thread free
+  (typing needs it). One still not typed by then is kept: in History, or, where History doesn't keep it, on the
+  pasteboard, which outlives ThumbFree; a notification says where. A recording is cancelled, as on Windows.
+- Settings are in `~/Library/Application Support/ThumbFree/settings.json`. **History** (`history.txt`) and opt-in
+  **samples** (`samples/`) are in `~/Library/Application Support/ThumbFree/Dictations.noindex`, in the same formats as
+  Windows. The folder is named that way so that Spotlight never indexes the text of your dictations: Spotlight leaves
+  out any folder whose name ends in `.noindex`, while a `.metadata_never_index` file no longer keeps it out of a folder
+  on recent macOS (Eclectic Light, tested on Sequoia and Tahoe), and `~/Library/Application Support` itself is indexed.
+  Windows marks history.txt "not content indexed" for the same reason.
+- Nothing from password fields; samples never from web browsers. **History leaves out private browser windows**, and
+  any browser window that can't be told apart from one, from the window's title as the Accessibility API reads it
+  (`PrivateWindows`). A browser window whose text box or title can't be read counts as private. What each browser's
+  sources say:
+  - Chrome, Chromium and Brave: the AXTitle is the window's accessible title, "<page> - Google Chrome" with
+    " (Incognito)" (Brave: " (Private)", Tor windows too) or " (Guest)" added, in the browser's language; ThumbFree
+    knows every language they ship.
+  - Firefox: "<page> — Private Browsing" on macOS, in every language it ships. "Never remember history" makes every
+    window private without saying so, so ThumbFree reads that setting in Firefox's profiles.
+  - Tor Browser and Mullvad Browser are always private.
+  - Safari's private windows have the same titles as the others, and no other signal is known to be reliable, so
+    Safari's dictations aren't kept in History, nor those of the other browsers whose private windows can't be told
+    apart yet: Edge (its strings are closed, so its title can't be checked without a Mac), Arc, Opera, Vivaldi,
+    DuckDuckGo, Orion, the Chromium and Firefox forks, and any other app that opens web links. A real-Mac check can
+    move a browser to the list above.
+- Logs, in `~/Library/Logs/ThumbFree`, hold timings and error names, never your words or window titles.
 
 ## Distribution
 

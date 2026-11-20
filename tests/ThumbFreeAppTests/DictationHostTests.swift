@@ -6,9 +6,10 @@ import ThumbFreeSpeech
 
 /// thumbfree-windows tests/ThumbFree.App.Tests/DictationHostTests.cs: the dictation host with the desktop, the
 /// Accessibility API, the microphone and the models faked: what gets typed where, and when. (Its silent-microphone
-/// case is in tests/ThumbFreeMacTests, with the Mac's SilenceWatch.)
+/// case is in tests/ThumbFreeMacTests, with the Mac's SilenceWatch.) As on the Mac, the app in front has no window
+/// title (`MacDesktop.frontmostApp`): only the box's read has the title.
 final class DictationHostTests: XCTestCase {
-    private static let chat = WindowInfo(handle: 42, processId: 7, processName: "WhatsApp", title: "Chat")
+    private static let chat = WindowInfo(handle: 42, processId: 7, processName: "WhatsApp", title: "")
 
     private var folder: TempFolder!
     private var desktop: FakeDesktop!
@@ -17,11 +18,13 @@ final class DictationHostTests: XCTestCase {
     private var models: FakeModels!
     private var downloads: FakeModelManager!
     private var surface: FakeSurface!
+    private var environment: FakeEnvironment!
     private var services: AppServices!
     private var host: DictationHost!
     private var finished: Pending<DictationOutcome>!
     private let status = Locked<[StatusUpdate]>([])
     private let stopped = Locked<[Int]>([])
+    private let copied = Locked<[String]>([])
 
     override func setUp() {
         useTestBrowsers()
@@ -32,10 +35,13 @@ final class DictationHostTests: XCTestCase {
         models = FakeModels()
         downloads = FakeModelManager()
         surface = FakeSurface()
-        services = TestServices.create(folder, models: downloads)
+        environment = FakeEnvironment()
+        services = TestServices.create(folder, environment: environment, models: downloads)
 
         // Shown at once, on any thread, as the Windows tests make theirs off the UI thread.
-        services.notifier = Notifier(surface: surface, state: services.state, copy: { _ in }, queue: nil)
+        let copied = self.copied
+        services.notifier = Notifier(
+            surface: surface, state: services.state, copy: { text in copied.update { $0.append(text) } }, queue: nil)
         desktop.window = Self.chat
         fields.field = DictationField(
             window: Self.chat, app: FakeFields.app(Self.chat), multiLine: true, textBefore: "", caretKnown: true,
@@ -200,9 +206,10 @@ final class DictationHostTests: XCTestCase {
         XCTAssertNil(host.inserter.lastText)
     }
 
-    func testAPrivateBrowserWindowKeepsNoHistoryEvenWhenItsBoxCantBeRead() throws {
-        desktop.window = WindowInfo(
-            handle: 43, processId: 8, processName: "Microsoft Edge", title: "New tab - [InPrivate] - Microsoft Edge")
+    func testABrowserWindowWhoseBoxCantBeReadKeepsNoHistory() throws {
+        // C#'s private-window test gave Edge an InPrivate window title. The Mac's app in front has no title, so with
+        // its box unread a browser's window can't be told from a private one, and counts as one (`PrivateWindows`).
+        desktop.window = WindowInfo(handle: 43, processId: 8, processName: "Google Chrome", title: "")
         fields.field = nil
         models.session.script = { _ in ([], "private words") }
         models.session.final = ["Private words."]
@@ -215,6 +222,16 @@ final class DictationHostTests: XCTestCase {
         XCTAssertTrue(outcome.typedAll)
         XCTAssertEqual(desktop.typed, "Private words.")
         XCTAssertTrue(services.history.entries().isEmpty)
+    }
+
+    /// The Mac's own: an app that isn't a browser has no private windows, so its dictation is kept even unread.
+    func testADictationIntoAnAppThatIsntABrowserIsKeptEvenWhenItsBoxCantBeRead() throws {
+        fields.field = nil
+
+        let outcome = try XCTUnwrap(host.dictate(["Hello there."], live: false).wait(timeout: 10))
+
+        XCTAssertTrue(outcome.typedAll)
+        XCTAssertEqual(services.history.entries().map(\.text), ["Hello there."])
     }
 
     func testTypingThatFailsTypesNothingMoreAndKeepsTheWholeDictationToCopy() throws {
@@ -448,6 +465,203 @@ final class DictationHostTests: XCTestCase {
         XCTAssertEqual(models.threads.value, [1, 4])
     }
 
+    /// The Mac's own (Windows types one in the moment it waits as it exits): quitting waits for a dictation being
+    /// typed, off the main thread.
+    func testQuittingWaitsForADictationBeingTyped() throws {
+        desktop.typeDelay = 0.5
+        let dictation = host.dictate(["Hello there."], live: false)
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 5) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        XCTAssertEqual(desktop.typed, "Hello there.")
+        XCTAssertEqual(try XCTUnwrap(dictation.wait(timeout: 5)).typedAll, true)
+        XCTAssertTrue(surface.shown.isEmpty)
+        XCTAssertTrue(environment.copied.isEmpty)
+    }
+
+    /// The Mac's own: a dictation not typed by the time ThumbFree quits is kept in History, once, and a notification
+    /// says so.
+    func testADictationNotTypedBeforeQuittingIsKeptInHistory() throws {
+        desktop.typeDelay = 1.5
+        let dictation = host.dictate(["Hello there."], live: false)
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 0.3) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        XCTAssertEqual(services.history.entries().map(\.text), ["Hello there."])
+        XCTAssertTrue(environment.copied.isEmpty)
+        XCTAssertEqual(
+            surface.shown.last?.text, "ThumbFree quit before it was typed. It's in the menu bar's recent dictations.")
+        XCTAssertEqual(try XCTUnwrap(dictation.wait(timeout: 5)).kept, true)
+        XCTAssertEqual(services.history.entries().count, 1)
+    }
+
+    /// The Mac's own: where History doesn't keep it, a dictation not typed by the time ThumbFree quits goes on the
+    /// pasteboard, which outlives ThumbFree.
+    func testADictationNotTypedBeforeQuittingGoesOnThePasteboardWhereHistoryDoesntKeepIt() throws {
+        services.settings.update { $0.keepHistory = false }
+        desktop.typeDelay = 1.5
+        let dictation = host.dictate(["Hello there."], live: false)
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 0.3) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        XCTAssertEqual(environment.copied, ["Hello there."])
+        XCTAssertEqual(
+            surface.shown.last?.text,
+            "ThumbFree quit before it was typed, so it's on the pasteboard: paste it with ⌘V.")
+        XCTAssertNotNil(dictation.wait(timeout: 5))
+        XCTAssertTrue(services.history.entries().isEmpty)
+    }
+
+    /// A password box found when the box is read again (the web page described it) refuses the dictation: the recording
+    /// stops, as for one found at the start, and it's said once.
+    func testAPasswordBoxFoundWhenAWebPageDescribesItStopsTheRecording() throws {
+        fields.field = DictationField(
+            window: Self.chat, app: FakeFields.app(Self.chat), isResolved: false, kind: "AXWebArea web unresolved")
+        fields.again = {
+            DictationField(
+                window: Self.chat, app: FakeFields.app(Self.chat), password: true, multiLine: false,
+                kind: "AXTextField/AXSecureTextField single-line secure web")
+        }
+        models.session.script = { accepted in accepted < 5 ? ([], "my secret") : (["My secret words."], "and") }
+        models.session.final = ["My secret words.", "And more."]
+
+        host.beginDictationCapture(2)
+        audio.speak(seconds: 1.2)
+        waitFor { self.stopped.value.contains(2) }
+
+        XCTAssertFalse(audio.running)
+        XCTAssertEqual(desktop.typed, "")
+        XCTAssertEqual(fields.readsAgain.value, 1)
+        XCTAssertEqual(status.value.filter { $0.message.contains("password") }.count, 1)
+        XCTAssertTrue(services.history.entries().isEmpty)
+        XCTAssertNil(services.notifier?.untypedText)
+    }
+
+    /// A box read again after the last dictation typed into it, and a password box by then, refuses the dictation once.
+    func testAPasswordBoxFoundWhenTheBoxIsReadAgainAfterTypingRefusesTheDictationOnce() throws {
+        let box = try XCTUnwrap(fields.field)
+        fields.again = {
+            var secret = box
+            secret.password = true
+            return secret
+        }
+        desktop.typeDelay = 0.3
+
+        let first = host.dictate(["Hello there."], live: false)
+        let second = host.dictate(["my secret"], live: false)
+        _ = try XCTUnwrap(first.wait(timeout: 10))
+        let refused = try XCTUnwrap(second.wait(timeout: 10))
+
+        XCTAssertEqual(refused.problem, "password field")
+        XCTAssertEqual(desktop.typed, "Hello there.")
+        XCTAssertEqual(status.value.filter { $0.message.contains("password") }.count, 1)
+        XCTAssertEqual(services.history.entries().map(\.text), ["Hello there."])
+    }
+
+    /// The Mac's own: a web page that hadn't described its box when the dictation started (Chromium and Electron apps
+    /// do it about 2 s after they're woken) has it read again right before the first piece is typed, not at the first
+    /// update, and the dictation is laid out for it: here after "Hi.", with a joining space.
+    func testAWebPagesBoxIsReadAgainRightBeforeTheFirstPieceIsTyped() throws {
+        fields.field = DictationField(
+            window: Self.chat, app: FakeFields.app(Self.chat), isResolved: false, kind: "AXWebArea web unresolved")
+        fields.again = {
+            DictationField(
+                window: Self.chat, app: FakeFields.app(Self.chat), multiLine: true, textBefore: "Hi.", caretKnown: true,
+                kind: "AXTextArea multi-line web")
+        }
+        models.session.script = { accepted in
+            switch accepted {
+            case ..<5: return ([], "hello there")
+            case ..<10: return (["Hello there."], "how are")
+            default: return (["Hello there.", "How are you?"], "")
+            }
+        }
+        models.session.final = ["Hello there.", "How are you?"]
+
+        host.beginDictationCapture(1)
+        audio.speak(seconds: 0.3)
+        let readsBeforeTyping = fields.readsAgain.value
+        audio.speak(seconds: 0.9)
+        waitFor { !self.desktop.typed.isEmpty }
+        host.endDictationCapture(cancel: false)
+        let outcome = try finishedOutcome()
+
+        XCTAssertEqual(readsBeforeTyping, 0)
+        XCTAssertEqual(fields.readsAgain.value, 1)
+        XCTAssertTrue(outcome.typedAll)
+        XCTAssertEqual(desktop.typed, " Hello there. How are you?")
+    }
+
+    func testAMicrophoneThatStopsMidDictationWritesWhatWasSaidAndSaysSo() throws {
+        models.session.script = { _ in (["Hello there."], "") }
+        models.session.final = ["Hello there."]
+
+        host.beginDictationCapture(6)
+        audio.speak(seconds: 0.5)
+        audio.fail(TestError("The microphone was unplugged."))
+        let outcome = try finishedOutcome()
+
+        XCTAssertTrue(outcome.typedAll)
+        XCTAssertEqual(desktop.typed, "Hello there.")
+        XCTAssertTrue(stopped.value.contains(6))
+        XCTAssertFalse(audio.running)
+        XCTAssertEqual(surface.shown.last?.title, "Dictation stopped")
+        XCTAssertTrue(
+            status.value.contains { $0.message == "The microphone stopped. What you said so far is being written." })
+    }
+
+    func testADictationStopsByItselfAtTheTimeLimitAndIsWritten() throws {
+        services.settings.update { $0.maxDictationSeconds = 2 }
+        models.session.script = { _ in (["Hello there."], "") }
+        models.session.final = ["Hello there."]
+
+        host.beginDictationCapture(7)
+        audio.speak(seconds: 2.4)
+        let outcome = try finishedOutcome()
+
+        XCTAssertTrue(outcome.typedAll)
+        XCTAssertTrue(stopped.value.contains(7))
+        XCTAssertFalse(audio.running)
+        XCTAssertTrue(
+            status.value.contains { $0.message == "Dictation stops by itself after 2 seconds. Tap Fn to keep going." })
+    }
+
+    func testAModelThatDoesntLoadStopsTheRecordingAndSaysWhatToDo() {
+        models.loadFailure.update { $0 = TestError("The model's files are damaged.") }
+
+        host.beginDictationCapture(8)
+        waitFor { self.stopped.value.contains(8) }
+
+        XCTAssertFalse(audio.running)
+        XCTAssertTrue(status.value.contains { $0.message.hasPrefix("Couldn't load the speech model.") })
+        XCTAssertTrue(services.history.entries().isEmpty)
+    }
+
+    /// The notification copies the dictation that wasn't typed; the pill names the menu bar's item too, and only it
+    /// when notifications are off.
+    func testClickingTheNotificationCopiesTheDictationThatWasntTyped() throws {
+        let fields = self.fields!
+        desktop.onCheck = { fields.same = false }
+
+        let outcome = try XCTUnwrap(host.dictate(["Hello there."], live: false).wait(timeout: 10))
+        surface.click()
+
+        XCTAssertTrue(outcome.kept)
+        XCTAssertEqual(copied.value, ["Hello there."])
+        XCTAssertNil(services.notifier?.untypedText)
+        let safe = "Your dictation is safe: click its notification, or choose Copy the text that wasn't typed in the "
+            + "menu bar."
+        XCTAssertTrue(status.value.contains { $0.message.hasSuffix(safe) })
+
+        environment.notifications = false
+        _ = try XCTUnwrap(host.dictate(["How are you?"], live: false).wait(timeout: 10))
+        let menu = "Your dictation is safe: choose Copy the text that wasn't typed in the menu bar."
+        XCTAssertTrue(status.value.contains { $0.message.hasSuffix(menu) })
+    }
+
     private func dictateWithTheMicrophone() throws {
         host.beginDictationCapture(1)
         audio.speak(seconds: 0.3)
@@ -505,7 +719,13 @@ final class FakeDesktop: Desktop, GatedInput, @unchecked Sendable {
 
     var modifiersDown: Bool { modifierHeld() }
 
-    func foregroundWindow() -> WindowInfo? { window }
+    /// The app in front as `MacDesktop` gives it: without its window's title.
+    func foregroundWindow() -> WindowInfo? {
+        window.map {
+            WindowInfo(
+                handle: $0.handle, processId: $0.processId, processName: $0.processName, title: "", appName: $0.appName)
+        }
+    }
 
     func checkFocusedField() throws -> FieldCheck {
         onCheck?()
@@ -550,12 +770,17 @@ final class FakeDesktop: Desktop, GatedInput, @unchecked Sendable {
 final class FakeFields: FieldReader, @unchecked Sendable {
     private static let bundles = [
         "WhatsApp": "net.whatsapp.WhatsApp", "Microsoft Edge": "com.microsoft.edgemac", "Bank": "com.example.Bank",
+        "Google Chrome": "com.google.Chrome",
     ]
 
     private let lock = NSLock()
     private var box: DictationField?
     private var reading: (() -> DictationField?)?
+    private var readingAgain: (() -> DictationField?)?
     private var focusStays = true
+
+    /// How many times the box was read again.
+    let readsAgain = Locked(0)
 
     var field: DictationField? {
         get { lock.withLock { box } }
@@ -566,6 +791,12 @@ final class FakeFields: FieldReader, @unchecked Sendable {
     var reader: (() -> DictationField?)? {
         get { lock.withLock { reading } }
         set { lock.withLock { reading = newValue } }
+    }
+
+    /// The box when it's read again (instead of reading it as `read` does): a web page's box once it's described.
+    var again: (() -> DictationField?)? {
+        get { lock.withLock { readingAgain } }
+        set { lock.withLock { readingAgain = newValue } }
     }
 
     /// The focus is still in the dictation's box.
@@ -587,7 +818,13 @@ final class FakeFields: FieldReader, @unchecked Sendable {
     }
 
     func readAgain(_ start: DictationField) -> DictationField? {
-        same ? read(start.window) : nil
+        readsAgain.update { $0 += 1 }
+        guard same else { return nil }
+        if let again {
+            return again()
+        }
+
+        return read(start.window)
     }
 
     func isSameField(_ start: DictationField, _ now: WindowInfo?) -> Bool? { same }
@@ -621,6 +858,11 @@ final class FakeAudio: AudioSource, @unchecked Sendable {
         stop()
     }
 
+    /// The microphone stops by itself: unplugged, with no other one.
+    func fail(_ error: Error) {
+        onFailure?(error)
+    }
+
     /// Sound at `word`'s level (a fake word the fake recognizer reads back); 0 is a pause.
     func speak(seconds: Double, word: Float = 0.3) {
         var sent = 0.0
@@ -647,9 +889,16 @@ final class FakeModels: SpeechModels, @unchecked Sendable {
     /// The threads each model was loaded with.
     let threads = Locked<[Int]>([])
 
+    /// What loading a model throws (nil: it loads).
+    let loadFailure = Locked<Error?>(nil)
+
     func isInstalled(_ spec: ModelSpec) -> Bool { installed.value.contains(spec.id) }
 
     func load(_ spec: ModelSpec, threads: Int) throws -> Recognizer {
+        if let failure = loadFailure.value {
+            throw failure
+        }
+
         self.threads.update { $0.append(threads) }
         return FakeRecognizer()
     }

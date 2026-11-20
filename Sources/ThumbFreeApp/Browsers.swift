@@ -1,11 +1,11 @@
 import AppKit
 import ThumbFreeCore
 
-/// Web browsers, by bundle identifier (thumbfree-windows `Browsers`, which goes by process name). A browser can't
-/// reliably say whether a window is private: Chrome's and Brave's private windows have no marker in their titles, and
-/// other browsers translate theirs. So whatever goes into a browser is treated as possibly private (PLAN 3.8: where
-/// privacy is unknown, keep no samples). Besides the browsers listed here, every app on this Mac that opens web links
-/// counts (`BrowserList`), as on Windows every browser registered on the PC does.
+/// Web browsers, by bundle identifier (thumbfree-windows `Browsers`, which goes by process name). Not every browser can
+/// say whether a window is private, so samples are never kept from one (PLAN 3.8: where privacy is unknown, keep no
+/// samples), and History leaves out the windows that are, or may be (`PrivateWindows`). Besides the browsers listed
+/// here, every app on this Mac that opens web links counts (`BrowserList`), as on Windows every browser registered on
+/// the PC does.
 public enum Browsers {
     private static let state = State()
 

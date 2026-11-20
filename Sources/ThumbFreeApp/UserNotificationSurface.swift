@@ -14,7 +14,7 @@ public final class UserNotificationSurface: NSObject, NotificationSurface, UNUse
     private let center: UNUserNotificationCenter
     private let lock = NSLock()
     private let clicked = Handler<String?>()
-    private var lastIdentifier: String?
+    private let delivering = DispatchGroup()
     private var asked = false
 
     /// Notification Center exists only for an app bundle with an identifier: not for a bare binary (`swift run`).
@@ -67,18 +67,25 @@ public final class UserNotificationSurface: NSObject, NotificationSurface, UNUse
         }
 
         let identifier = UUID().uuidString
-        lock.withLock { lastIdentifier = identifier }
+        let delivering = self.delivering
+        delivering.enter()
         center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { error in
             if let error {
                 Log.warn("notification not shown: \(Log.kind(of: error))")
             }
+
+            delivering.leave()
         }
     }
 
+    /// All of ThumbFree's notifications, as Windows' Hide takes them back: a stale "can't hear you" never stays.
     public func hide() {
-        guard let identifier = lock.withLock({ lastIdentifier }) else { return }
-        center.removeDeliveredNotifications(withIdentifiers: [identifier])
-        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeAllDeliveredNotifications()
+        center.removeAllPendingNotificationRequests()
+    }
+
+    public func waitForDelivery(timeout: TimeInterval) {
+        _ = delivering.wait(timeout: .now() + timeout)
     }
 
     /// Shown even while ThumbFree is the active app.

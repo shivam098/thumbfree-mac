@@ -8,8 +8,16 @@ public protocol NotificationSurface: AnyObject {
 
     func show(_ title: String, _ text: String, warning: Bool, tag: String?)
 
-    /// Takes the notification shown last off the screen and out of Notification Center.
+    /// Takes all of ThumbFree's notifications off the screen and out of Notification Center, as Windows' Hide does.
     func hide()
+
+    /// Waits, `timeout` at most, until the notifications shown so far have reached Notification Center (before
+    /// ThumbFree quits).
+    func waitForDelivery(timeout: TimeInterval)
+}
+
+extension NotificationSurface {
+    public func waitForDelivery(timeout: TimeInterval) {}
 }
 
 /// "Never speak into the void, never lose a dictation" (PLAN 3.6), as thumbfree-windows `Notifier` does it. The
@@ -80,8 +88,8 @@ public final class Notifier: @unchecked Sendable {
     }
 
     /// Sound came back (or the dictation ended): the warning goes, from the screen and Notification Center. While a
-    /// dictation is kept it stays, as on Windows, which can only take back all of ThumbFree's notifications at once,
-    /// and goes when the dictation is copied.
+    /// dictation is kept it stays, since taking it back takes back all of ThumbFree's notifications (as on Windows),
+    /// the kept one's too; it goes when the dictation is copied.
     public func clearMicrophoneSilent() {
         post {
             guard self.state.microphoneSilent else { return }
@@ -112,6 +120,24 @@ public final class Notifier: @unchecked Sendable {
                 "If the microphone goes quiet or your words can't be typed, you'll see it here.",
                 warning: false, tag: nil)
         }
+    }
+
+    /// ThumbFree quit before a dictation could be typed: it's in the menu bar's recent dictations, or, where History
+    /// doesn't keep it, on the pasteboard (the Mac's own: Windows types it or loses it).
+    public func showKeptAtQuit(onPasteboard: Bool) {
+        post {
+            self.show(
+                "Your dictation is safe",
+                onPasteboard
+                    ? "ThumbFree quit before it was typed, so it's on the pasteboard: paste it with ⌘V."
+                    : "ThumbFree quit before it was typed. It's in the menu bar's recent dictations.",
+                warning: true, tag: nil)
+        }
+    }
+
+    /// Waits, `timeout` at most, until the notifications shown so far are in Notification Center.
+    public func waitForDelivery(timeout: TimeInterval) {
+        surface.waitForDelivery(timeout: timeout)
     }
 
     /// Copies `untypedText` (from the notification or the menu bar). False when there's nothing to copy.

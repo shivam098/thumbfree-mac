@@ -29,24 +29,28 @@ final class MacDesktopTests: XCTestCase {
         XCTAssertEqual(message.windowFrame, CGRect(x: 10, y: 20, width: 800, height: 600))
         XCTAssertEqual(message.fieldInfo, FieldInfo(multiLine: true, email: true))
 
-        // Webmail in a browser, a private browsing window, the same words in another app's title, a search box (never
-        // email layout), a password box (its text isn't read) and a box that doesn't say whether it takes line breaks.
-        let safari = app(2, "com.apple.Safari", "Safari")
+        // Webmail in Chrome, a private Firefox window, any Safari window (its private ones can't be told apart), the
+        // same words in another app's title, a search box (never email layout), a password box (its text isn't read)
+        // and a box that doesn't say whether it takes line breaks.
+        let chrome = app(2, "com.google.Chrome", "Google Chrome")
         let firefox = app(3, "org.mozilla.firefox", "Firefox")
         let notes = app(4, "com.apple.Notes", "Notes")
+        let safari = app(6, "com.apple.Safari", "Safari")
         typealias Case = (
             app: FocusedField.App, title: String, role: String?, subrole: String?, kind: String, info: FieldInfo
         )
         let cases: [Case] = [
-            (safari, "Inbox (3) - Gmail", kAXTextFieldRole, nil, "AXTextField single-line email",
+            (chrome, "Inbox (3) - Gmail - Google Chrome", kAXTextFieldRole, nil, "AXTextField single-line email",
              FieldInfo(email: true)),
-            (firefox, "Mozilla Firefox Private Browsing", kAXTextAreaRole, nil, "AXTextArea multi-line private",
+            (firefox, "Inbox — Private Browsing", kAXTextAreaRole, nil, "AXTextArea multi-line private",
              FieldInfo(multiLine: true, private: true)),
+            (safari, "Inbox (3) - Gmail", kAXTextFieldRole, nil, "AXTextField single-line email private-unknown",
+             FieldInfo(private: true, email: true)),
             (notes, "Incognito mode — Gmail", kAXTextAreaRole, nil, "AXTextArea multi-line",
              FieldInfo(multiLine: true)),
             (mail, "Inbox", kAXTextFieldRole, kAXSearchFieldSubrole, "AXTextField/AXSearchField single-line search",
              FieldInfo(search: true)),
-            (safari, "Sign in", kAXTextFieldRole, kAXSecureTextFieldSubrole,
+            (chrome, "Sign in - Google Chrome", kAXTextFieldRole, kAXSecureTextFieldSubrole,
              "AXTextField/AXSecureTextField single-line secure", FieldInfo(password: true)),
             (app(5, "com.apple.Terminal", "Terminal"), "zsh", nil, nil, "no role", FieldInfo(multiLine: true)),
         ]
@@ -141,7 +145,7 @@ final class MacDesktopTests: XCTestCase {
     func testAWebPagesBoxIsReadOnceThePageHasDescribedIt() throws {
         // Chrome's page has the focus while it hasn't described its boxes yet; then the box in it does.
         let chrome = app(6, "com.google.Chrome", "Google Chrome")
-        let page = focus(chrome, title: "Compose - Gmail", role: "AXWebArea", text: "")
+        let page = focus(chrome, title: "Compose - Gmail - Google Chrome", role: "AXWebArea", text: "")
         let reader = MacFieldReader(FocusedField.Reader(source: ax))
         let start = try XCTUnwrap(reader.read(Self.window))
         XCTAssertFalse(start.isResolved)

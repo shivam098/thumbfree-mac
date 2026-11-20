@@ -24,6 +24,9 @@ public final class AppController: NSObject, NSApplicationDelegate {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ThumbFreeCore.version
     }
 
+    /// The longest ThumbFree waits, when it quits, for a dictation being finished to be typed.
+    static let quitWait: TimeInterval = 10
+
     private let paths: AppPaths
     private let instance: SingleInstance
     private let permissions = Permissions()
@@ -41,6 +44,7 @@ public final class AppController: NSObject, NSApplicationDelegate {
     private var recording = false
     private var recordingId = 0
     private var paused = false
+    private var quitting = false
 
     /// The tap the permissions allowed when the dictation key's tap was last made: it's made again only when they
     /// change, not every few seconds while macOS refuses it.
@@ -71,6 +75,27 @@ public final class AppController: NSObject, NSApplicationDelegate {
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         menuBar?.open()
         return false
+    }
+
+    /// Quitting while a dictation is being transcribed or typed: it's typed first, 10 s at most, with the main thread
+    /// free, since typing asks it about Secure Input (`DictationHost.finishForQuit`). A recording is cancelled, as on
+    /// Windows.
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let host, !quitting else { return quitting ? .terminateCancel : .terminateNow }
+        if recording {
+            endDictation(cancel: true)
+        }
+
+        guard host.isBusy else { return .terminateNow }
+        quitting = true
+        Log.info("quitting once the dictation is typed")
+        host.finishForQuit(timeout: Self.quitWait) {
+            MainActor.assumeIsolated {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+
+        return .terminateLater
     }
 
     /// Lets History and samples finish writing before the process ends.

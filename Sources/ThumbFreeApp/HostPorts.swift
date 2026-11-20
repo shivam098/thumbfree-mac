@@ -42,7 +42,7 @@ public struct DictationField: Sendable {
     /// An email app or a webmail page: a greeting or a sign-off alone is enough for email layout.
     public var email: Bool
 
-    /// A browser window whose title says it's private.
+    /// A browser window that's private, or that can't be told apart from one (`PrivateWindows`): History leaves it out.
     public var privateWindow: Bool
 
     /// The text before the cursor (at most the last 2,000 UTF-16 units); nil when the box doesn't say.
@@ -94,17 +94,17 @@ public struct DictationField: Sendable {
         self.focused = focused
     }
 
-    /// The box as the read found it, with the app and window rules (`FieldRules`) applied: thumbfree-windows
-    /// `FocusInspector.Read`, on the Accessibility API's facts.
+    /// The box as the read found it, with the app and window rules (`FieldRules`, `PrivateWindows`) applied:
+    /// thumbfree-windows `FocusInspector.Read`, on the Accessibility API's facts.
     public init(_ focused: FocusedField, window: WindowInfo) {
         let app = TargetApp(name: focused.app.name ?? "", bundleIdentifier: focused.app.bundleIdentifier)
         let email = !focused.isSearch && FieldRules.isEmail(app, title: focused.windowTitle)
-        let privateWindow = FieldRules.isPrivateWindow(app, title: focused.windowTitle)
+        let privacy = PrivateWindows.reason(app, title: focused.windowTitle)
         self.init(
             window: window, app: app, password: focused.isSecure, multiLine: focused.takesLineBreaks,
-            search: focused.isSearch, email: email, privateWindow: privateWindow, textBefore: focused.textBefore,
+            search: focused.isSearch, email: email, privateWindow: privacy != nil, textBefore: focused.textBefore,
             caretKnown: focused.caretKnown, isResolved: focused.isResolved,
-            kind: focused.kind + (email ? " email" : "") + (privateWindow ? " private" : ""),
+            kind: focused.kind + (email ? " email" : "") + (privacy.map { " " + $0.rawValue } ?? ""),
             windowFrame: focused.windowFrame, focused: focused)
     }
 
@@ -117,8 +117,8 @@ public struct DictationField: Sendable {
     }
 }
 
-/// Which boxes get email layout, and which windows are private, from the app and its window's title (the rules of
-/// thumbfree-windows `FocusInspector`, by bundle identifier instead of process name).
+/// Which boxes get email layout, from the app and its window's title (the rules of thumbfree-windows `FocusInspector`,
+/// by bundle identifier instead of process name). Its private-window rule is `PrivateWindows`.
 public enum FieldRules {
     /// Mail, Outlook, Spark (classic and current), Thunderbird and eM Client, as Windows lists its email apps.
     static let emailApps: Set<String> = [
@@ -130,8 +130,6 @@ public enum FieldRules {
         "Gmail", "Outlook", "Proton Mail", "Yahoo Mail", "Zoho Mail", "Fastmail", "Superhuman", "Thunderbird", "Spark",
     ]
 
-    static let privateTitles = ["InPrivate", "Incognito", "Private Browsing", "Private browsing"]
-
     /// An email app, or a browser showing webmail (its window's title says which).
     public static func isEmail(_ app: TargetApp, title: String?) -> Bool {
         if let id = app.bundleIdentifier, emailApps.contains(id.lowercased()) {
@@ -140,13 +138,6 @@ public enum FieldRules {
 
         guard let title, Browsers.isBrowser(app.bundleIdentifier) else { return false }
         return webmailTitles.contains { DotNet.contains(title, $0) }
-    }
-
-    /// A browser window whose title says it's private (Edge's InPrivate, Firefox's private browsing). Chrome's and
-    /// Safari's private windows don't say so in their titles, which is why samples are never kept from browsers.
-    public static func isPrivateWindow(_ app: TargetApp, title: String?) -> Bool {
-        guard let title, Browsers.isBrowser(app.bundleIdentifier) else { return false }
-        return privateTitles.contains { DotNet.contains(title, $0) }
     }
 }
 

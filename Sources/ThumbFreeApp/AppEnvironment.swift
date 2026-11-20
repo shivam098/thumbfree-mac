@@ -33,7 +33,8 @@ public struct Confirmation: Equatable, Sendable {
 }
 
 /// What the menu bar (and the window and the guide, in phase 4) ask of macOS (thumbfree-windows `IAppEnvironment`).
-/// Tests use a fake, so they never touch the pasteboard, the login items or the screen. Use it from the main thread.
+/// Tests use a fake, so they never touch the pasteboard, the login items or the screen. Use it from the main thread,
+/// except `notificationsEnabled`, which the dictation host asks on its own thread.
 public protocol AppEnvironment: AnyObject {
     /// "Start at login" (SMAppService: ThumbFree starts in the menu bar).
     var startsAtLogin: Bool { get set }

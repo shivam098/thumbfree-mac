@@ -2,10 +2,10 @@ import Foundation
 import ThumbFreeCore
 
 /// History (PLAN 3.11): the text of recent dictations, kept only on this Mac in
-/// ~/Library/Application Support/ThumbFree/history.txt and left out of Time Machine backups, so one can be copied
-/// again (thumbfree-windows `HistoryStore`). 30 days and at most 500, in the shared format of `History`, so every
-/// platform reads it alike. Reads and edits happen in memory and are safe from any thread; the file is written on a
-/// queue of its own. While "Keep history" is off nothing is kept.
+/// ~/Library/Application Support/ThumbFree/Dictations.noindex/history.txt, out of Spotlight (`AppPaths`) and Time
+/// Machine backups, so one can be copied again (thumbfree-windows `HistoryStore`). 30 days and at most 500, in the
+/// shared format of `History`, so every platform reads it alike. Reads and edits happen in memory and are safe from
+/// any thread; the file is written on a queue of its own. While "Keep history" is off nothing is kept.
 public final class HistoryStore: @unchecked Sendable {
     private let path: String
     private let enabled: () -> Bool
@@ -151,7 +151,8 @@ public final class HistoryStore: @unchecked Sendable {
                 atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try Data(snapshot.map(History.encode).joined(separator: "\n").utf8).write(to: URL(fileURLWithPath: temp))
 
-            // Windows keeps it out of the search index; the Mac keeps it out of backups (PLAN 3.11).
+            // Windows keeps it out of the search index (the Mac's folder does that); the Mac keeps it out of backups
+            // too (PLAN 3.11).
             var url = URL(fileURLWithPath: temp)
             var values = URLResourceValues()
             values.isExcludedFromBackup = true

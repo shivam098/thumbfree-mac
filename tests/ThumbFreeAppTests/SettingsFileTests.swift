@@ -140,6 +140,19 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(store.lastError).contains("“dictationKey” should be Fn or RightOption"))
     }
 
+    /// A trailing comma after a line comment that ends at a carriage return alone is seen as one, so a new key gets no
+    /// second comma (which the read-back would refuse).
+    func testANewKeyAfterACommentEndingAtACarriageReturnGetsNoSecondComma() {
+        TestFiles.write(path, "{\n  \"soundFeedback\": true // sounds\r,\n}")
+        let store = SettingsStore(AppSettings.load(from: path), path: path)
+
+        XCTAssertTrue(store.update { $0.liveTyping = false })
+
+        XCTAssertNil(store.lastError)
+        XCTAssertEqual(TestFiles.text(path), "{\n  \"soundFeedback\": true // sounds\r,\n  \"liveTyping\": false\n}")
+        XCTAssertFalse(AppSettings.load(from: path).liveTyping)
+    }
+
     /// What System.Text.Json takes, with comments skipped and trailing commas allowed, and the line of what it
     /// doesn't, from 0 (the message says "near line" one more).
     func testTheReaderTakesWhatWindowsTakesAndNamesTheSameLine() {
@@ -152,10 +165,16 @@ final class SettingsFileTests: XCTestCase {
             ("{ // x\r \"a\": 1 }", nil),
             // A comment that isn't closed is a mistake where it starts.
             ("{ \"a\": 1 }\n\n /* x\n\n", 2),
-            // Lines are counted at line feeds, also in comments, but not at carriage returns.
+            // Lines are counted at line feeds, also in comments, but not at carriage returns, except one that ends a
+            // line comment: System.Text.Json counts a line at the end of each line comment.
             ("{ \"a\": 1 \r\n\r\n \"b\": 2 }", 2),
             ("{\r  \"a\": 1,\r  \"b\" 2\r}", 0),
             ("{\n  // ok\n  /* ok\n  ok */ \"a\" 2\n}", 3),
+            ("{ // x\r \"a\" 1 }", 1),
+            ("{ // x\r\n \"a\" 1 }", 1),
+            ("{ // x\r\r\n \"a\" 1 }", 2),
+            ("{ /* x\r */ \"a\" 1 }", 0),
+            ("{ \"a\": 1 } // x\r x", 1),
             ("{\n \"a\": \"x\ny\" }", 1),
             ("{ \"a\": \"x\u{7F}y\" }", nil),
             ("{ \"a\": 01 }", 0),

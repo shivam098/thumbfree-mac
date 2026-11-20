@@ -3,14 +3,6 @@ import ThumbFreeCore
 import ThumbFreeSpeech
 @testable import ThumbFreeApp
 
-/// The browser only these tests' Launch Services knows about (the Windows tests' registered browser).
-private let registeredBrowser = "com.example.ExampleBrowser"
-
-/// Tests never ask this Mac's Launch Services: the apps that open web links are just `registeredBrowser`.
-private func useTestBrowsers() {
-    Browsers.readRegistered { [registeredBrowser] }
-}
-
 /// thumbfree-windows tests/ThumbFree.App.Tests/StoreTests.cs: HistoryStoreTests.
 final class HistoryStoreTests: XCTestCase {
     private var folder: TempFolder!
@@ -44,7 +36,8 @@ final class HistoryStoreTests: XCTestCase {
         // A new session reads what the last one wrote.
         XCTAssertEqual(newStore().entries(), entries)
 
-        // The Mac keeps it out of Time Machine backups (PLAN 3.11), where Windows keeps it out of the search index.
+        // The Mac keeps it out of Time Machine backups (PLAN 3.11), and out of Spotlight with its folder (AppPaths),
+        // where Windows keeps it out of the search index.
         let values = try URL(fileURLWithPath: file).resourceValues(forKeys: [.isExcludedFromBackupKey])
         XCTAssertEqual(values.isExcludedFromBackup, true)
     }
@@ -393,6 +386,32 @@ final class SampleStoreTests: XCTestCase {
         try await store.deleteAll()
         XCTAssertEqual(store.summary().count, 0)
         XCTAssertTrue(TestFiles.exists(zip))
+    }
+
+    /// A zip without its 64-bit extension holds files under 4 GB: a bigger one is never read, and the export that
+    /// meets one leaves no zip, not even a partial one.
+    func testAFileOf4GBIsNeverReadAndAFailedExportLeavesNoZip() async throws {
+        let store = newStore()
+        let sample = folder.file("samples/20261119-180000-000")
+        try FileManager.default.createDirectory(atPath: sample, withIntermediateDirectories: true)
+        let big = (sample as NSString).appendingPathComponent("audio.wav")
+        XCTAssertTrue(FileManager.default.createFile(atPath: big, contents: nil))
+
+        // Sparse: it takes no room on the disk, and reading it would fill the memory with 4 GB of zeros.
+        let handle = try XCTUnwrap(FileHandle(forWritingAtPath: big))
+        try handle.truncate(atOffset: UInt64(UInt32.max) + 1)
+        try handle.close()
+
+        let zip = folder.file("out.zip")
+        do {
+            _ = try await store.exportZip(to: zip)
+            XCTFail("a 4 GB file went into the zip")
+        } catch {
+            XCTAssertTrue(error is ZipArchive.TooBig, "\(error)")
+        }
+
+        XCTAssertFalse(TestFiles.exists(zip))
+        XCTAssertFalse(TestFiles.exists(zip + ".partial"))
     }
 
     private func newStore(maxSamples: Int = SampleStore.maxSamples, maxBytes: Int64 = SampleStore.maxBytes)

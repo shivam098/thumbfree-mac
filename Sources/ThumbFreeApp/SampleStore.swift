@@ -28,10 +28,11 @@ public struct SampleSummary: Equatable, Sendable {
 
 /// "Help improve ThumbFree" (PLAN 3.8; off unless switched on), as thumbfree-windows `SampleStore`. Each dictation's
 /// audio (a 16 kHz mono WAV) and a note (what was recognised, what was typed, the app's name, the model, the app
-/// version and the time) are kept in ~/Library/Application Support/ThumbFree/samples: the newest 300, at most 150 MB.
-/// Never from password fields or web browsers (`mayKeep`). Nothing is ever sent anywhere: "Save samples as a zip…"
-/// makes a file the person shares however they choose, and "Delete all" removes everything. The same folder layout and
-/// note fields as Windows (with "platform": "macos"), so the same tools read both. Saves run on a queue of their own.
+/// version and the time) are kept in ~/Library/Application Support/ThumbFree/Dictations.noindex/samples, out of
+/// Spotlight (`AppPaths`): the newest 300, at most 150 MB. Never from password fields or web browsers (`mayKeep`).
+/// Nothing is ever sent anywhere: "Save samples as a zip…" makes a file the person shares however they choose, and
+/// "Delete all" removes everything. The same folder layout and note fields as Windows (with "platform": "macos"), so
+/// the same tools read both. Saves run on a queue of their own.
 public final class SampleStore: @unchecked Sendable {
     public static let maxSamples = 300
     public static let maxBytes: Int64 = 150_000_000
@@ -165,7 +166,14 @@ public final class SampleStore: @unchecked Sendable {
 
             let temp = path + ".partial"
             unlink(temp)
-            try ZipArchive.write(temp, entries)
+            do {
+                try ZipArchive.write(temp, entries)
+            } catch {
+                // Half a zip helps nobody.
+                unlink(temp)
+                throw error
+            }
+
             if rename(temp, path) != 0 {
                 let code = errno
                 unlink(temp)

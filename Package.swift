@@ -25,10 +25,10 @@ let package = Package(
         .target(name: "ThumbFreeSpeech", dependencies: ["ThumbFreeCore", "CSherpaOnnx", "CWhisper"]),
         .target(name: "ThumbFreeMac", dependencies: ["ThumbFreeCore"]),
         // The app's own layer, ported from thumbfree-windows src/ThumbFree.App: settings, History, samples and the log,
-        // in the same file formats as Windows. The ThumbFree executable is a thin launcher for it.
-        .target(name: "ThumbFreeApp", dependencies: ["ThumbFreeCore", "ThumbFreeMac"]),
-        .executableTarget(
-            name: "ThumbFree", dependencies: ["ThumbFreeApp", "ThumbFreeCore", "ThumbFreeSpeech", "ThumbFreeMac"]),
+        // in the same file formats as Windows, and the dictation host, the menu bar, the notifications and the model
+        // downloads. The ThumbFree executable is a thin launcher for it.
+        .target(name: "ThumbFreeApp", dependencies: ["ThumbFreeCore", "ThumbFreeMac", "ThumbFreeSpeech"]),
+        .executableTarget(name: "ThumbFree", dependencies: ["ThumbFreeApp"]),
         // Next to the shared test data in tests/vectors and tests/audio (lowercase, as in every ThumbFree repo).
         .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"], path: "tests/ThumbFreeCoreTests"),
         .testTarget(

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import ThumbFreeApp
 
 /// A temporary folder per test, deleted afterwards (the Windows tests' TempFolder).
 final class TempFolder {
@@ -107,3 +108,11 @@ let trickyText = "a\"b\\c\nd\te\u{1}f😀g\u{A0}hé\u{2028}i\u{AD}j<>&'+`\u{FEFF
 let testStart = Date(timeIntervalSince1970: 1_795_091_400)
 
 let india = TimeZone(secondsFromGMT: 19_800) ?? .current
+
+/// The browser only these tests' Launch Services knows about (the Windows tests' registered browser).
+let registeredBrowser = "com.example.ExampleBrowser"
+
+/// Tests never ask this Mac's Launch Services: the apps that open web links are just `registeredBrowser`.
+func useTestBrowsers() {
+    Browsers.readRegistered { [registeredBrowser] }
+}

@@ -253,4 +253,24 @@ final class DictationInserterTests: XCTestCase {
         try enterFirst.insert("first new line second")
         XCTAssertEqual(["type:First", "keys:Ctrl+Enter", "type:Second"], desktop.actions)
     }
+
+    func testNewLineKeysAreFoundByTheProcessNameThenByTheAppsName() throws {
+        // The Mac's own case: an app's name is translated in some languages, its executable's name never is.
+        let inserter = DictationInserter(
+            desktop, DictationFormatter(), newLineKeysByProcess: [("TextEdit", "Enter"), ("Code", "Ctrl+Enter")])
+        desktop.foreground = WindowInfo(
+            handle: 2, processId: 2, processName: "TextEdit", title: "", appName: "テキストエディット")
+        try inserter.insert("first new line second")
+        XCTAssertEqual(["type:First", "keys:Enter", "type:Second"], desktop.actions)
+
+        desktop.actions.removeAll()
+        desktop.foreground = WindowInfo(handle: 3, processId: 3, processName: "Electron", title: "", appName: "Code")
+        try inserter.insert("first new line second")
+        XCTAssertEqual(["type:First", "keys:Ctrl+Enter", "type:Second"], desktop.actions)
+
+        desktop.actions.removeAll()
+        desktop.foreground = WindowInfo(handle: 4, processId: 4, processName: "Slack", title: "", appName: "Slack")
+        try inserter.insert("first new line second")
+        XCTAssertEqual(["type:First", "keys:Shift+Enter", "type:Second"], desktop.actions)
+    }
 }

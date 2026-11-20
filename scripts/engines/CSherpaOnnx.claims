@@ -5,8 +5,9 @@
 # Tab-separated columns:
 #   1. the library;
 #   2. its groups of symbols, a regular expression for the whole group name: a C++ symbol's outermost namespace or class
-#      (or the function, in the global namespace), "C " and a C symbol's prefix (up to its first underscore), "ObjC "
-#      and a class, or "(operator) " and the symbol, for an operator outside any namespace;
+#      (or the function, in the global namespace; for google, which protobuf shares with glog and gflags, the first two:
+#      "google::protobuf"), "C " and a C symbol's prefix (up to its first underscore), "ObjC " and a class, or
+#      "(operator) " and the symbol, for an operator outside any namespace;
 #   3. its license files, space-separated, which the notice must contain word for word ("-": none needed);
 #   4. a line its section of that file has, when the file covers several libraries ("-": the whole file is its own).
 sherpa-onnx	sherpa_onnx|SherpaOnnx\w*|GetByteBpeTable\w*|C SherpaOnnx\w*|C SherpaOffline\w*	LICENSE	-
@@ -26,7 +27,7 @@ ONNX Runtime	onnxruntime|onnx_transpose_optimization|model_package|ModelPackage|
 MLAS (in ONNX Runtime)	Mlas\w*|MLAS_\w*|BlockwiseQuantizer|BlockwiseQDQQuantizer|Q80BlkQuant|SQ[248]BitGemm\w*|Q4BitBlkDequant\w*|QuantizeARow_\w*|PackQuantBData_\w*|PackScalesAndZeroPoints_\w*|GenerateLUT_\w*|TMACComputeGemm_\w*|lut_ctor_\w*|tbl_g4_\w*|partial_max_g4_\w*|load_float_n_\w*|HGemmOperation|CalculateLutBufferSize|ThreadedBuf\w*|GetMlas\w*|rope_avx2|sqnbitgemm_neon|C Mlas\w*|C CheckSaturationForVPMADDUBSW	onnxruntime/LICENSE	-
 MurmurHash3 (in ONNX Runtime)	getblock	onnxruntime/ThirdPartyNotices.txt	MurmurHash3
 ONNX (in ONNX Runtime)	onnx	onnxruntime/ThirdPartyNotices.txt	Copyright (c) Facebook, Inc. and Microsoft Corporation. All rights reserved.
-protobuf (in ONNX Runtime)	google	onnxruntime/ThirdPartyNotices.txt	Copyright 2008 Google Inc.
+protobuf (in ONNX Runtime)	google::protobuf	onnxruntime/ThirdPartyNotices.txt	Copyright 2008 Google Inc.
 abseil (in ONNX Runtime)	absl|C Absl\w*	onnxruntime/ThirdPartyNotices.txt	https://github.com/abseil/abseil-cpp
 re2 (in ONNX Runtime)	re2	onnxruntime/ThirdPartyNotices.txt	Copyright (c) 2009 The RE2 Authors. All rights reserved.
 flatbuffers (in ONNX Runtime)	flatbuffers	onnxruntime/ThirdPartyNotices.txt	google/flatbuffers

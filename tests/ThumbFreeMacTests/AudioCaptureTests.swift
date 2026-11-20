@@ -97,24 +97,6 @@ private func rms(_ samples: ArraySlice<Float>) -> Float {
 }
 
 final class AudioCaptureTests: XCTestCase {
-    // MARK: The level, from thumbfree-windows TapToDictateKeysTests.cs
-
-    func testAudioLevelMapsQuietToZeroAndLoudToOne() {
-        for (amplitude, expected) in [(Float(0), Float(0)), (0.0005, 0), (0.5, 1)] {
-            let samples = (0..<480).map { $0 % 2 == 0 ? amplitude : -amplitude }
-
-            XCTAssertEqual(expected, AudioCapture.level(of: samples), accuracy: 0.001, "amplitude \(amplitude)")
-        }
-    }
-
-    func testAudioLevelIsBetweenZeroAndOneForSpeech() {
-        let samples = (0..<480).map { $0 % 2 == 0 ? Float(0.03) : -0.03 }
-        let level = AudioCapture.level(of: samples)
-
-        XCTAssertGreaterThanOrEqual(level, 0.3)
-        XCTAssertLessThanOrEqual(level, 0.8)
-    }
-
     // MARK: The silent microphone, from thumbfree-windows DictationHostTests.cs
 
     func testExactSilenceMeansTheMicrophoneWasCutOffUntilSoundComesBack() {
@@ -226,7 +208,6 @@ final class AudioCaptureTests: XCTestCase {
         let chunks = received.all
         XCTAssertEqual([480, 480, 480], chunks.map(\.samples.count))
         XCTAssertEqual((0..<1_440).map { Float($0) / 1_000 }, chunks.flatMap(\.samples))
-        XCTAssertEqual(chunks.map { AudioCapture.level(of: $0.samples) }, chunks.map(\.level))
 
         capture.stop()
         XCTAssertFalse(capture.isRunning)
@@ -234,6 +215,25 @@ final class AudioCaptureTests: XCTestCase {
         // A buffer still on its way when the microphone stopped is dropped.
         input.speak(speech)
         XCTAssertEqual(3, received.all.count)
+    }
+
+    /// Each chunk's level is the mono mix's: a microphone on input 1 of a two-input interface reads 6 dB quieter.
+    @MainActor
+    func testTheLevelIsTakenFromTheMonoMix() throws {
+        let input = FakeAudioInput()
+        let capture = AudioCapture(input: input)
+        let received = ReceivedChunks()
+        capture.onChunk = { chunk in received.add(chunk) }
+        try capture.start()
+
+        // About -30 dBFS on input 1 and silence on input 2 mix to -36 dBFS: halfway up the meter.
+        let mixed = Float(pow(10, -36.0 / 20))
+        input.speak(floatBuffer(rate: 16_000, channels: 2, frames: 480) { channel, _ in channel == 0 ? 2 * mixed : 0 })
+        capture.stop()
+
+        let chunk = try XCTUnwrap(received.all.first)
+        XCTAssertEqual(1, received.all.count)
+        XCTAssertEqual(0.5, chunk.level, accuracy: 0.000_1)
     }
 
     @MainActor

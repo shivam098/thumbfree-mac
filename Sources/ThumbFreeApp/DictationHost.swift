@@ -325,12 +325,15 @@ public final class DictationHost: @unchecked Sendable {
     /// A dictation is being recorded, transcribed or typed.
     public var isBusy: Bool { active.value > 0 }
 
+    /// Quitting has something to see to (`finishForQuit`): a dictation being finished, or one that wasn't typed and is
+    /// kept for copying.
+    public var hasWorkForQuit: Bool { isBusy || services.notifier?.untypedText != nil }
+
     /// Quitting (`AppController`): the dictations already finishing get `timeout` to be transcribed and typed, as
     /// Windows types one in the moment it waits when it exits. They're waited for on another thread, so the main thread
     /// stays free: typing asks it about Secure Input. One whose text is known but isn't typed by then is kept, as a
-    /// dictation whose box changed is: in History when History keeps it, else on the pasteboard, which outlives
-    /// ThumbFree, and a notification (delivered before `whenDone`) says where. Then `whenDone` runs on the UI thread.
-    /// Cancel a recording first: Windows drops one when it exits.
+    /// dictation whose box changed is. Then what wasn't typed is handed over (`handOverAtQuit`), and `whenDone` runs on
+    /// the UI thread. Cancel a recording first: Windows drops one when it exits.
     public func finishForQuit(timeout: TimeInterval, then whenDone: @escaping () -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let deadline = Date(timeIntervalSinceNow: timeout)
@@ -341,26 +344,36 @@ public final class DictationHost: @unchecked Sendable {
             let left = keepUnfinished()
             quitWaited.value = true
             post { [self] in
-                if !left.isEmpty, let notifier = services.notifier {
-                    let notInHistory = left.filter { !$0.inHistory }.map(\.text)
-                    if !notInHistory.isEmpty {
-                        services.environment.copyText(notInHistory.joined(separator: "\n\n"))
-                    }
-
-                    notifier.showKeptAtQuit(onPasteboard: !notInHistory.isEmpty)
-                    notifier.waitForDelivery(timeout: 1)
-                }
-
+                handOverAtQuit(left)
                 whenDone()
             }
         }
     }
 
+    /// UI thread, when ThumbFree quits with dictations that weren't typed: those `keepUnfinished` kept, and the one
+    /// kept for copying (`Notifier.untypedText`), which would otherwise go with ThumbFree. What History doesn't have
+    /// (it was off, the window was private, or the entry has gone since) goes on the pasteboard, which outlives
+    /// ThumbFree, concealed from clipboard managers, since History may have left it out to keep it private. A
+    /// notification, delivered first, says where they are.
+    private func handOverAtQuit(_ left: [String]) {
+        guard let notifier = services.notifier else { return }
+        let kept = (notifier.untypedText.map { [$0] } ?? []) + left
+        guard !kept.isEmpty else { return }
+        let entries = services.history.entries()
+        let notInHistory = kept.filter { text in !entries.contains { $0.text == text } }
+        if !notInHistory.isEmpty {
+            services.environment.copyText(notInHistory.joined(separator: "\n\n"), concealed: true)
+        }
+
+        notifier.showKeptAtQuit(onPasteboard: !notInHistory.isEmpty)
+        notifier.waitForDelivery(timeout: 1)
+    }
+
     /// When ThumbFree quits: the dictations whose text is known but isn't typed yet are kept (History, unless it leaves
-    /// them out, and samples), and nothing more of them is typed. Returns their text, and whether History has it.
-    private func keepUnfinished() -> [(text: String, inHistory: Bool)] {
+    /// them out, and samples), and nothing more of them is typed. Returns their text.
+    private func keepUnfinished() -> [String] {
         let dictations = lock.withLock { Array(inFlight.values) }.sorted { $0.startTime < $1.startTime }
-        var left: [(text: String, inHistory: Bool)] = []
+        var left: [String] = []
         for d in dictations where !d.refused.value {
             guard let end = d.gate.withLock({ d.end }) else {
                 if !d.cancelled.value {
@@ -376,7 +389,7 @@ public final class DictationHost: @unchecked Sendable {
 
             Log.warn("dictation \(d.id): ThumbFree quit before it was typed; kept")
             keep(d, end)
-            left.append((text: end.text, inHistory: !end.info.private && services.current.keepHistory))
+            left.append(end.text)
         }
 
         return left

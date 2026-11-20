@@ -492,13 +492,14 @@ final class DictationHostTests: XCTestCase {
         XCTAssertEqual(services.history.entries().map(\.text), ["Hello there."])
         XCTAssertTrue(environment.copied.isEmpty)
         XCTAssertEqual(
-            surface.shown.last?.text, "ThumbFree quit before it was typed. It's in the menu bar's recent dictations.")
+            surface.shown.last?.text,
+            "ThumbFree quit with a dictation that wasn't typed. It's in the menu bar's recent dictations.")
         XCTAssertEqual(try XCTUnwrap(dictation.wait(timeout: 5)).kept, true)
         XCTAssertEqual(services.history.entries().count, 1)
     }
 
     /// The Mac's own: where History doesn't keep it, a dictation not typed by the time ThumbFree quits goes on the
-    /// pasteboard, which outlives ThumbFree.
+    /// pasteboard, which outlives ThumbFree, concealed from clipboard managers.
     func testADictationNotTypedBeforeQuittingGoesOnThePasteboardWhereHistoryDoesntKeepIt() throws {
         services.settings.update { $0.keepHistory = false }
         desktop.typeDelay = 1.5
@@ -508,9 +509,10 @@ final class DictationHostTests: XCTestCase {
 
         XCTAssertEqual(quit.wait(timeout: 10), true)
         XCTAssertEqual(environment.copied, ["Hello there."])
+        XCTAssertEqual(environment.concealed, [true])
         XCTAssertEqual(
             surface.shown.last?.text,
-            "ThumbFree quit before it was typed, so it's on the pasteboard: paste it with ⌘V.")
+            "ThumbFree quit with a dictation that wasn't typed, so it's on the pasteboard: paste it with ⌘V.")
         XCTAssertNotNil(dictation.wait(timeout: 5))
         XCTAssertTrue(services.history.entries().isEmpty)
     }
@@ -532,6 +534,41 @@ final class DictationHostTests: XCTestCase {
         let kept = services.history.entries().map(\.text)
         XCTAssertEqual(kept.count, 1)
         XCTAssertTrue(kept.first?.contains("are you") == true)
+    }
+
+    /// The Mac's own: a dictation kept for copying that History doesn't have (it's off, or the window was private)
+    /// would go with ThumbFree. When it quits, the dictation goes on the pasteboard, concealed from clipboard managers,
+    /// and a notification says so, in place of the one whose click would then copy nothing.
+    func testADictationKeptForCopyingThatHistoryDoesntHaveGoesOnThePasteboardAtQuit() throws {
+        services.settings.update { $0.keepHistory = false }
+        fields.same = false
+        XCTAssertTrue(try XCTUnwrap(host.dictate(["Hello there."], live: false).wait(timeout: 10)).kept)
+        XCTAssertTrue(host.hasWorkForQuit)
+
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 0.3) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        XCTAssertEqual(environment.copied, ["Hello there."])
+        XCTAssertEqual(environment.concealed, [true])
+        XCTAssertGreaterThan(surface.hidden, 0)
+        XCTAssertEqual(
+            surface.shown.last?.text,
+            "ThumbFree quit with a dictation that wasn't typed, so it's on the pasteboard: paste it with ⌘V.")
+    }
+
+    /// The Mac's own: one that History has stays there, and the notification says so.
+    func testADictationKeptForCopyingThatHistoryHasStaysThereAtQuit() throws {
+        fields.same = false
+        XCTAssertTrue(try XCTUnwrap(host.dictate(["Hello there."], live: false).wait(timeout: 10)).kept)
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 0.3) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        XCTAssertTrue(environment.copied.isEmpty)
+        XCTAssertEqual(
+            surface.shown.last?.text,
+            "ThumbFree quit with a dictation that wasn't typed. It's in the menu bar's recent dictations.")
     }
 
     /// A password box found when the box is read again, right before the first piece is typed (the web page described

@@ -6,7 +6,7 @@ import ThumbFreeCore
 /// macOS as tests see it (thumbfree-windows tests' FakeEnvironment): nothing touches the pasteboard, the login items
 /// or the screen; answers are scripted.
 final class FakeEnvironment: AppEnvironment, @unchecked Sendable {
-    private let copiedTexts = Locked<[String]>([])
+    private let copies = Locked<[(text: String, concealed: Bool)]>([])
     var opened: [URL] = []
     var questions: [Confirmation] = []
     var answer = true
@@ -17,10 +17,13 @@ final class FakeEnvironment: AppEnvironment, @unchecked Sendable {
     var microphone = MicrophoneAccess.allowed
     var notifications = true
 
-    var copied: [String] { copiedTexts.value }
+    var copied: [String] { copies.value.map(\.text) }
 
-    func copyText(_ text: String) {
-        copiedTexts.update { $0.append(text) }
+    /// For each copy, whether it was concealed from clipboard managers.
+    var concealed: [Bool] { copies.value.map(\.concealed) }
+
+    func copyText(_ text: String, concealed: Bool) {
+        copies.update { $0.append((text: text, concealed: concealed)) }
     }
 
     func open(_ url: URL) {

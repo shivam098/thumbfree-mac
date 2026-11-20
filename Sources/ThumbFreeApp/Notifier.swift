@@ -122,15 +122,17 @@ public final class Notifier: @unchecked Sendable {
         }
     }
 
-    /// ThumbFree quit before a dictation could be typed: it's in the menu bar's recent dictations, or, where History
-    /// doesn't keep it, on the pasteboard (the Mac's own: Windows types it or loses it).
+    /// ThumbFree is quitting with dictations that weren't typed: they're in the menu bar's recent dictations, or, where
+    /// History doesn't have them, on the pasteboard (the Mac's own: Windows types one or loses it). ThumbFree's other
+    /// notifications go first: clicking one once ThumbFree has gone would copy nothing.
     public func showKeptAtQuit(onPasteboard: Bool) {
         post {
+            self.surface.hide()
             self.show(
                 "Your dictation is safe",
                 onPasteboard
-                    ? "ThumbFree quit before it was typed, so it's on the pasteboard: paste it with ⌘V."
-                    : "ThumbFree quit before it was typed. It's in the menu bar's recent dictations.",
+                    ? "ThumbFree quit with a dictation that wasn't typed, so it's on the pasteboard: paste it with ⌘V."
+                    : "ThumbFree quit with a dictation that wasn't typed. It's in the menu bar's recent dictations.",
                 warning: true, tag: nil)
         }
     }

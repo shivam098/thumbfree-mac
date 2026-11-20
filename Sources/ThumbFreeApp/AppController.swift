@@ -78,17 +78,22 @@ public final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// Quitting while a dictation is being transcribed or typed: it's typed first, 10 s at most, with the main thread
-    /// free, since typing asks it about Secure Input (`DictationHost.finishForQuit`). A recording is cancelled, as on
-    /// Windows.
+    /// free, since typing asks it about Secure Input; then what wasn't typed is handed over (`DictationHost`'s
+    /// `finishForQuit`). A recording is cancelled, as on Windows. Asked again meanwhile (Quit again, or logging out),
+    /// it waits for the same reply: cancelling would cancel the logout.
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let host, !quitting else { return quitting ? .terminateCancel : .terminateNow }
+        guard let host else { return .terminateNow }
+        if quitting {
+            return .terminateLater
+        }
+
         if recording {
             endDictation(cancel: true)
         }
 
-        guard host.isBusy else { return .terminateNow }
+        guard host.hasWorkForQuit else { return .terminateNow }
         quitting = true
-        Log.info("quitting once the dictation is typed")
+        Log.info("quitting once the dictations are seen to")
         host.finishForQuit(timeout: Self.quitWait) {
             MainActor.assumeIsolated {
                 NSApp.reply(toApplicationShouldTerminate: true)
@@ -288,7 +293,10 @@ public final class AppController: NSObject, NSApplicationDelegate {
     private func keyCommand(_ command: FnTapKeys.Command) {
         switch command {
         case .start:
-            if !recording && !paused {
+            if quitting {
+                // A dictation started now would keep ThumbFree waiting, then go with it.
+                keys?.isRecording = false
+            } else if !recording && !paused {
                 beginDictation()
             }
         case .finish:

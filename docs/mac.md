@@ -118,8 +118,11 @@ This page is the Mac side: how each feature is built here, and in what order.
   text that wasn't typed". macOS asks for permission to show them at the first dictation, not at launch.
 - **Quitting** while a dictation is being transcribed or typed waits for it, 10 s at most, with the main thread free
   (typing needs it). One still not typed by then is kept, and nothing more of it is typed: it's in History, or, where
-  History doesn't keep it, on the pasteboard, which outlives ThumbFree; a notification says where. A recording is
-  cancelled, as on Windows.
+  History doesn't keep it, on the pasteboard, which outlives ThumbFree. So is a dictation kept for copying that
+  History doesn't have. ThumbFree marks what it puts there as concealed and not copied by you (nspasteboard.org), so
+  clipboard managers leave it out of their history, and a notification says where it is. A recording is cancelled, as
+  on Windows; the dictation key does nothing while ThumbFree waits, and quitting again, or logging out, waits for the
+  same answer.
 - Settings are in `~/Library/Application Support/ThumbFree/settings.json`. **History** (`history.txt`) and opt-in
   **samples** (`samples/`) are in `~/Library/Application Support/ThumbFree/Dictations.noindex`, in the same formats as
   Windows. The folder is named that way so that Spotlight never indexes the text of your dictations: Spotlight leaves
@@ -134,7 +137,10 @@ This page is the Mac side: how each feature is built here, and in what order.
     " (Incognito)" (Brave: " (Private)", Tor windows too) or " (Guest)" added, in the browser's language; ThumbFree
     knows every language they ship.
   - Firefox: "<page> — Private Browsing" on macOS, in every language it ships. "Never remember history" makes every
-    window private without saying so, so ThumbFree reads that setting in Firefox's profiles.
+    window private without saying so, so ThumbFree reads that setting in Firefox's profiles. An administrator can do
+    the same where the profiles never show it, so ThumbFree also reads the app's `distribution/policies.json`, the
+    macOS preferences for its bundle identifier (configuration profiles, `defaults`), and AutoConfig's `.cfg` file. One
+    of those files that can't be read, or a `.cfg` that loads more from a server, counts as private.
   - Tor Browser and Mullvad Browser are always private.
   - Safari's private windows have the same titles as the others, and no other signal is known to be reliable, so
     Safari's dictations aren't kept in History, nor those of the other browsers whose private windows can't be told

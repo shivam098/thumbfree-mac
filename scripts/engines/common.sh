@@ -82,26 +82,6 @@ package_xcframework() {
   echo "$name: library SHA-256 $(shasum -a 256 "$library" | cut -d ' ' -f 1)"
 }
 
-# Fails unless the notice $2 covers every library linked into the static library $1. Each further argument is
-# "symbols|library|text": when a defined symbol contains `symbols` (a mangled C++ namespace or a C prefix), the notice
-# must contain `text`, a line from that library's license.
-check_notice() {
-  local library=$1 notice=$2 entry pattern name text
-  shift 2
-  nm -gjU "$library" > "$library.symbols" 2> /dev/null
-  for entry in "$@"; do
-    IFS='|' read -r pattern name text <<< "$entry"
-    if grep -q -F -- "$pattern" "$library.symbols"; then
-      if ! grep -q -F -- "$text" "$notice"; then
-        echo "::error::$name is linked into $(basename "$library"), but its license ('$text') isn't in the notice"
-        return 1
-      fi
-      echo "linked in, license in the notice: $name"
-    fi
-  done
-  rm "$library.symbols"
-}
-
 # A heading in a notice.
 section() {
   local rule=================================================================================

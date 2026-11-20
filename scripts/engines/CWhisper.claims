@@ -1,0 +1,5 @@
+# Who wrote the code in CWhisper, and what its notice must contain for each: scripts/engines/check-notice.py fails
+# unless every group of the library's symbols is claimed by a line here, and every claiming line's license files are in
+# the notice word for word. The columns are CSherpaOnnx.claims's.
+whisper.cpp and ggml	whisper\w*|ggml\w*|gguf\w*|tiled_\w*|dl_load_library|dl_get_sym|dl_error|C whisper|C ggml|C gguf|C quantize|C dequantize|C iq2xs|C iq3xs	src/LICENSE	-
+the C++ standard library (libc++: its LLVM exception needs no notice for compiled code), and compiler helpers	std|\(builtin\)|C __clang|C __block|C __copy|C __destroy	-	-

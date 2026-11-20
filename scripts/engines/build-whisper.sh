@@ -67,6 +67,34 @@ build() {
     return 1
   fi
 
+  # ggml's Metal source is embedded through generated assembly without .subsections_via_symbols, which Xcode's build
+  # system can't prelink with Swift (subsections.py says why). Each ..._end label becomes an alternate entry inside the
+  # data (before one more zero byte, which the length ggml computes leaves out), the file gets the directive, and the
+  # objects are assembled again.
+  local asm count=0
+  while IFS= read -r asm; do
+    if ! awk '/^_ggml_metallib_[A-Za-z0-9_]*_end:$/ {
+               print ".alt_entry " substr($0, 1, length($0) - 1); print; print ".byte 0"; ends++; next
+             }
+             { print }
+             END { print ".subsections_via_symbols"; exit (ends == 1 ? 0 : 1) }' "$asm" > "$asm.new"; then
+      echo "::error::$asm doesn't have exactly one _ggml_metallib_..._end label"
+      return 1
+    fi
+    mv "$asm.new" "$asm"
+    count=$((count + 1))
+  done < <(find "$dir" -name 'ggml-metal-embed*.s' | LC_ALL=C sort)
+  if [ "$count" -eq 0 ]; then
+    echo "::error::No embedded Metal source (ggml-metal-embed*.s) in $dir"
+    return 1
+  fi
+
+  echo "$arch: $count embedded Metal sources assembled with .subsections_via_symbols"
+  if ! cmake --build "$dir" --target whisper -j "$(sysctl -n hw.ncpu)" > "$dir.build2.log" 2>&1; then
+    tail -n 100 "$dir.build2.log"
+    return 1
+  fi
+
   # The objects of whisper and the ggml libraries it links. CMake's archives keep each object's build time, which
   # libtool copies, so the objects themselves are merged, with a fixed time: the same sources give the same bytes.
   local objects=() expected=0 target folder object library
@@ -99,6 +127,7 @@ build() {
 build arm64
 build x86_64 -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_BMI2=ON -DGGML_FMA=ON -DGGML_F16C=ON
 lipo -create -output "$work/libCWhisper.a" "$work/libCWhisper-arm64.a" "$work/libCWhisper-x86_64.a"
+python3 "$root/scripts/engines/subsections.py" --check "$work/libCWhisper.a"
 
 headers=$work/Headers/CWhisper
 mkdir -p "$headers"
@@ -125,13 +154,13 @@ notice=$out/CWhisper-NOTICE.txt
   echo "CWhisper.xcframework: whisper.cpp $version (https://github.com/ggml-org/whisper.cpp, commit $commit),"
   echo "with ggml, as one static library. Built by scripts/engines/build-whisper.sh in"
   echo "https://github.com/shivam098/thumbfree-mac, with $(toolchain). whisper.cpp and ggml are"
-  echo "used unmodified, under the license that follows."
+  echo "used unmodified, under the license that follows, except that the assembly embedding ggml's Metal source"
+  echo "marks its end label for Xcode's linker (.subsections_via_symbols, .alt_entry) and adds a zero byte after it."
   section "whisper.cpp and ggml"
   cat "$work/src/LICENSE"
 } > "$notice"
 
-check_notice "$work/libCWhisper.a" "$notice" \
-  "_whisper_|whisper.cpp|The ggml authors" \
-  "_ggml_|ggml|The ggml authors"
+(cd "$work" && python3 "$root/scripts/engines/check-notice.py" libCWhisper.a "$notice" \
+  "$root/scripts/engines/CWhisper.claims")
 
 package_xcframework CWhisper "$work/libCWhisper.a" "$work/Headers" "$out"

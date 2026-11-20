@@ -5,8 +5,9 @@ import Foundation
 extension ThumbFreeSpeech {
     /// Gets ggml, the engine under whisper.cpp, ready in the background before the first speech detector or Whisper
     /// model needs it. ggml's first use finds its devices, and making the Metal device compiles all of ggml's shaders
-    /// (they're built in as source): seconds on a Mac, about 20 s on CI's virtual GPU. Silero runs on the CPU but
-    /// waits for this too. It runs once per process, at utility priority; calling this again doesn't start it again.
+    /// (they're built in as source): seconds on a Mac, about 20 s on CI's virtual GPU, and they stay in memory. Silero
+    /// runs on the CPU but waits for this too. Only worth it when the chosen model uses Silero or Whisper (see
+    /// `ThumbFreeSpeech`). It runs once per process, at utility priority; calling this again doesn't start it again.
     /// `done`, if given, is called on a background queue once it has finished (straight away if it has).
     public static func warmUp(then done: (@Sendable () -> Void)? = nil) {
         Ggml.warmUp(then: done)

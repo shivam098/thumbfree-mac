@@ -1,7 +1,9 @@
 import ThumbFreeCore
 
-/// The speech engines (sherpa-onnx, whisper.cpp), the recognizers and the model store. Call `warmUp()` at launch, so
-/// the first dictation with Whisper or the speech detector doesn't wait for whisper.cpp's setup.
+/// The speech engines (sherpa-onnx, whisper.cpp), the recognizers and the model store. When the chosen model uses
+/// Silero or Whisper (Parakeet, or Hindi + English), call `warmUp()` at launch, and again when the user switches to
+/// such a model, so its first dictation doesn't wait for whisper.cpp's setup. English Live (Kroko) uses neither: don't
+/// warm up for it, since the warm-up compiles all of ggml's Metal shaders and keeps them in memory.
 public enum ThumbFreeSpeech {
     public static let coreVersion = ThumbFreeCore.version
 

@@ -6,7 +6,8 @@
 #   scripts/make-app.sh [version]
 #
 # The version is a number such as 0.1.0: by default the latest v* tag's, else 0.1.0. An ad-hoc signature is enough to
-# test on a Mac (the first time: right-click › Open); a normal install needs Developer ID signing (docs/mac.md).
+# test on a Mac: the first time, try to open the app, then choose System Settings › Privacy & Security › Open Anyway.
+# A normal install needs Developer ID signing (docs/mac.md).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

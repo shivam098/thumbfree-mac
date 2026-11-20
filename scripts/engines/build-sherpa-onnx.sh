@@ -4,8 +4,10 @@
 # it in the zip, CSherpaOnnx-NOTICE.txt with the license of everything linked in.
 #
 # The libraries are sherpa-onnx's own release build of the version the Windows app's NuGet package has (2.0.1): the
-# universal2 static libraries without text-to-speech, which ThumbFree doesn't use. This merges them into one library
-# and adds the C API header from the same release tag. Every download is checked against a pinned SHA-256.
+# universal2 static libraries without text-to-speech, which ThumbFree doesn't use. This merges them into one library,
+# marks ONNX Runtime's assembly kernels so Xcode's build system can prelink them (subsections.py), and adds the C API
+# header from the same release tag. Every download is checked against a pinned SHA-256, and the notice against every
+# symbol in the library (check-notice.py, CSherpaOnnx.claims).
 #
 # On a Mac with the Xcode common.sh pins: scripts/engines/build-sherpa-onnx.sh [output folder, default
 # build/engines/out]
@@ -26,15 +28,25 @@ onnxruntime_package_sha256=d9e5c0c79929e201f5b8eb095e6809a91ce78be9866a1bca0dfab
 onnxruntime_license_sha256=2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c
 onnxruntime_notices_sha256=0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2
 
-# The versions sherpa-onnx 2.0.1's build uses (its cmake folder) of the libraries it links in that have their own
-# licenses, and of the Apache-2.0 ones, for the notice.
+# The versions sherpa-onnx 2.0.1's build uses (its cmake folder, and kaldi-decoder's for kaldifst) of the libraries it
+# links in, for the notice and their license files.
 kissfft_commit=febd4caeed32e33ad8b2e0bb5ea77542c40f18ec
 darts_clone_commit=87b71afd6cf784953e3c08f24c64203397f3b724
+threadpool_commit=9a42ec1329f259a5f4881a291db1dcb8f2ad9040
 hclust_cpp_version=2026-02-25
 utf8proc_version=2.12.0
 json_version=3.12.0
 eigen_version=5.0.1
-apache="kaldi-native-fbank 1.22.4, kaldi-decoder 0.3.0 with kaldifst, OpenFst 1.8.5 and simple-sentencepiece 0.7"
+kaldi_native_fbank_version=1.22.4
+kaldi_decoder_version=0.3.0
+kaldifst_version=1.8.0
+openfst_version=1.8.5-2026-07-09
+simple_sentencepiece_version=0.7
+
+# The Eigen that ONNX Runtime 1.28.2 builds in: its build of that static library (csukuangfj/onnxruntime-build run
+# 33741118112, which uploaded it to onnxruntime-libs v1.28.2) logs "Fetch Eigen3 from" this commit, "Eigen 3.4.90".
+onnxruntime_eigen_commit=1d8b82b0740839c0de7f1242a3585e3390ff5f33
+eigen_archive=https://gitlab.com/libeigen/eigen/-/archive
 github=https://raw.githubusercontent.com
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -76,12 +88,28 @@ fetch "$github/mborgerding/kissfft/$kissfft_commit/LICENSES/BSD-3-Clause" kissff
   4d6bcab46f27d6d0c878e8305d4bdcfe040d52bf6656b9771f04c9fb9902c0ed
 fetch "$github/s-yata/darts-clone/$darts_clone_commit/COPYING.md" darts-clone-COPYING.md \
   c6ab19db56ed127201dfb05346ea702ab53c4e387f43eafc343a7f4c2f2ae91e
+fetch "$github/progschj/ThreadPool/$threadpool_commit/COPYING" threadpool-COPYING \
+  8afbc5160151ecc1fc27dce6cb03e4af8fb1033d59848107ce7561161242b0c7
 fetch "$github/csukuangfj/hclust-cpp/$hclust_cpp_version/LICENSE" hclust-cpp-LICENSE \
   e361d842da1d290351860ad6dcce2673a1e42e4f873a3ae1ff4eb92c6adaa882
 fetch "$github/JuliaStrings/utf8proc/v$utf8proc_version/LICENSE.md" utf8proc-LICENSE.md \
   3b510150d34f248a221bb88e1d811238d6c6c18b51231822c42974c39bb07256
 fetch "$github/nlohmann/json/v$json_version/LICENSE.MIT" json-LICENSE.MIT \
   46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603
+fetch "$github/csukuangfj/kaldi-native-fbank/v$kaldi_native_fbank_version/LICENSE" kaldi-native-fbank-LICENSE \
+  "$license_sha256"
+fetch "$github/k2-fsa/kaldi-decoder/v$kaldi_decoder_version/LICENSE" kaldi-decoder-LICENSE "$license_sha256"
+fetch "$github/k2-fsa/kaldifst/v$kaldifst_version/LICENSE" kaldifst-LICENSE \
+  a682d6efd1ee5dee08a8e405c233c2c198ea70ae0718129daa83ab58cfe31c5d
+fetch "$github/csukuangfj/openfst/v$openfst_version/COPYING" openfst-COPYING \
+  4300529197035fd3452350718a0b8cee984e9412c9932d7f35fcde849fc97a4b
+fetch "$github/pkufool/simple-sentencepiece/v$simple_sentencepiece_version/LICENSE" simple-sentencepiece-LICENSE \
+  c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+# Both Eigens have the same license file (from the GitHub mirror of Eigen's repository that ONNX Runtime uses).
+fetch "$github/eigen-mirror/eigen/$eigen_version/COPYING.MPL2" eigen-COPYING.MPL2 \
+  66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172
+fetch "$github/eigen-mirror/eigen/$onnxruntime_eigen_commit/COPYING.MPL2" onnxruntime-eigen-COPYING.MPL2 \
+  66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172
 
 # Everything the C API needs, onnxruntime included. The C++ API and PortAudio (for sherpa-onnx's own tools) stay out.
 inputs=()
@@ -90,6 +118,11 @@ for name in sherpa-onnx-c-api sherpa-onnx-core sherpa-onnx-fst sherpa-onnx-fstfa
   inputs+=("$package/lib/lib$name.a")
 done
 merge_static libCSherpaOnnx.a "${inputs[@]}"
+
+# ONNX Runtime's MLAS kernels are assembly without MH_SUBSECTIONS_VIA_SYMBOLS, which Xcode's build system can't prelink
+# with Swift (subsections.py says why). They get the flag, with no symbol in them starting a new piece.
+python3 "$root/scripts/engines/subsections.py" libCSherpaOnnx.a
+python3 "$root/scripts/engines/subsections.py" --check libCSherpaOnnx.a
 
 mkdir -p Headers/CSherpaOnnx
 cp c-api.h Headers/CSherpaOnnx/
@@ -111,68 +144,60 @@ notice=$out/CSherpaOnnx-NOTICE.txt
   echo "(SHA-256 $package_sha256) by scripts/engines/build-sherpa-onnx.sh in"
   echo "https://github.com/shivam098/thumbfree-mac, with $(toolchain) (CMake builds only CWhisper)."
   echo
-  echo "Inside, used unmodified, under the licenses that follow:"
-  echo "- sherpa-onnx $version: Apache License 2.0."
-  echo "- $apache,"
-  echo "  from sherpa-onnx's build: Apache License 2.0, the same license as sherpa-onnx."
+  echo "The code is used unmodified, except that ONNX Runtime's MLAS assembly kernels are marked for Xcode's linker"
+  echo "(the MH_SUBSECTIONS_VIA_SYMBOLS flag, with their inner labels as alternate entries); no instruction or data"
+  echo "changed. Inside, under the licenses that follow, each from the library's own repository at the version used:"
+  echo "- Apache License 2.0: sherpa-onnx $version, and kaldi-native-fbank $kaldi_native_fbank_version, kaldi-decoder" \
+    "$kaldi_decoder_version and"
+  echo "  simple-sentencepiece $simple_sentencepiece_version, which have the same license file; kaldifst" \
+    "$kaldifst_version (in kaldi-decoder) and OpenFst ${openfst_version%%-*},"
+  echo "  with their own."
   echo "- KISS FFT (commit $kissfft_commit, in kaldi-native-fbank): BSD 3-Clause."
   echo "- darts-clone (in simple-sentencepiece): BSD 2-Clause."
+  echo "- ThreadPool by Jakob Progsch and Vaclav Zeman (in simple-sentencepiece): zlib License."
   echo "- hclust-cpp with fastcluster ($hclust_cpp_version): BSD 2-Clause."
   echo "- utf8proc $utf8proc_version: MIT, with the Unicode data license."
   echo "- nlohmann/json $json_version: MIT."
-  echo "- Eigen $eigen_version (in kaldi-decoder): Mozilla Public License 2.0, whose text is in ONNX Runtime's notices"
-  echo "  below. Its source code:"
-  echo "  https://gitlab.com/libeigen/eigen/-/archive/$eigen_version/eigen-$eigen_version.tar.gz"
-  echo "- ONNX Runtime $onnxruntime_version (commit $onnxruntime_commit): MIT. It builds in other"
-  echo "  open source software, listed with their licenses in its third-party notices below, among them protobuf,"
-  echo "  abseil, re2, flatbuffers, ONNX, SafeInt, GSL, nlohmann/json, date, Boost, and Eigen (Mozilla Public License"
-  echo "  2.0; its source code is at https://gitlab.com/libeigen/eigen, at the commit ONNX Runtime's cmake/deps.txt"
-  echo "  gives)."
-  section "Apache License 2.0: sherpa-onnx, kaldi-native-fbank, kaldi-decoder, kaldifst, OpenFst, simple-sentencepiece"
+  echo "- Eigen: Mozilla Public License 2.0. Eigen is used unmodified, in two versions, whose source code is at:"
+  echo "  - Eigen $eigen_version, in kaldi-decoder:"
+  echo "    $eigen_archive/$eigen_version/eigen-$eigen_version.tar.gz"
+  echo "  - Eigen 3.4.90 at commit $onnxruntime_eigen_commit, in ONNX Runtime:"
+  echo "    $eigen_archive/$onnxruntime_eigen_commit/eigen-$onnxruntime_eigen_commit.tar.gz"
+  echo "- ONNX Runtime $onnxruntime_version (commit $onnxruntime_commit), with its MLAS kernels: MIT."
+  echo "  ONNX Runtime builds in other open source software, listed with their licenses in its third-party"
+  echo "  notices below: of those, this library has protobuf, abseil, re2, flatbuffers, ONNX, SafeInt, GSL, date,"
+  echo "  nlohmann/json, Boost and MurmurHash3. Those notices come from"
+  echo "  onnxruntime-osx-arm64-$onnxruntime_version.zip in"
+  echo "  https://github.com/csukuangfj/onnxruntime-libs/releases/tag/v$onnxruntime_version, the release this"
+  echo "  library's static ONNX Runtime comes from: ONNX Runtime's own repository is no longer online."
+  section "Apache License 2.0: sherpa-onnx, kaldi-native-fbank, kaldi-decoder, simple-sentencepiece, OpenFst"
   cat LICENSE
+  section "kaldifst"
+  cat kaldifst-LICENSE
+  section "OpenFst"
+  cat openfst-COPYING
   section "KISS FFT"
   cat kissfft-COPYING
   echo
   cat kissfft-BSD-3-Clause
   section "darts-clone"
   cat darts-clone-COPYING.md
+  section "ThreadPool"
+  cat threadpool-COPYING
   section "hclust-cpp (fastcluster)"
   cat hclust-cpp-LICENSE
   section "utf8proc"
   cat utf8proc-LICENSE.md
   section "nlohmann/json"
   cat json-LICENSE.MIT
+  section "Eigen"
+  cat eigen-COPYING.MPL2
   section "ONNX Runtime"
   cat onnxruntime/LICENSE
   section "ONNX Runtime: third-party notices"
   cat onnxruntime/ThirdPartyNotices.txt
 } > "$notice"
 
-check_notice libCSherpaOnnx.a "$notice" \
-  "N11sherpa_onnx|sherpa-onnx|Apache License" \
-  "N3knf|kaldi-native-fbank|kaldi-native-fbank" \
-  "13kaldi_decoder|kaldi-decoder|kaldi-decoder" \
-  "8kaldifst|kaldifst|kaldifst" \
-  "N3fst|OpenFst|OpenFst" \
-  "14ssentencepiece|simple-sentencepiece|simple-sentencepiece" \
-  "_kiss_fft|KISS FFT|Mark Borgerding" \
-  "5Darts|darts-clone|Susumu Yata" \
-  "14fastclustercpp|fastcluster|Christoph Dalitz" \
-  "_utf8proc_|utf8proc|Unicode data license" \
-  "8nlohmann|nlohmann/json|Copyright (c) 2013-2025 Niels Lohmann" \
-  "5Eigen|Eigen|Mozilla Public License Version 2.0" \
-  "N11onnxruntime|ONNX Runtime|Copyright (c) Microsoft Corporation" \
-  "6google8protobuf|protobuf|Copyright 2008 Google Inc." \
-  "4absl|abseil|abseil-cpp" \
-  "N3re2|re2|The RE2 Authors" \
-  "11flatbuffers|flatbuffers|google/flatbuffers" \
-  "N4onnx|ONNX|Open Neural Network Exchange" \
-  "7SafeInt|SafeInt|dcleblanc/SafeInt" \
-  "N3gsl|GSL|Microsoft GSL" \
-  "N4date|date|HowardHinnant/date" \
-  "5boost|Boost|Boost Software License" \
-  "_cpuinfo_|cpuinfo|pytorch/cpuinfo" \
-  "_kai_|KleidiAI|KleidiAI" \
-  "_xnn_|XNNPACK|google/XNNPACK"
+python3 "$root/scripts/engines/check-notice.py" libCSherpaOnnx.a "$notice" "$root/scripts/engines/CSherpaOnnx.claims"
 
 package_xcframework CSherpaOnnx libCSherpaOnnx.a Headers "$out"

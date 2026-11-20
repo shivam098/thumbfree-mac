@@ -38,6 +38,7 @@ jobs:
           swift --version
           command -v cmake
           cmake --version
+          python3 --version
 
       - name: sherpa-onnx
         run: bash scripts/engines/build-sherpa-onnx.sh build/engines/out
@@ -45,7 +46,7 @@ jobs:
       - name: whisper.cpp
         run: bash scripts/engines/build-whisper.sh build/engines/out
 
-      - name: Link both zips into a Swift program and run it (arm64, and x86_64 through Rosetta)
+      - name: Link both zips into Swift programs and run them (arm64, x86_64 through Rosetta, and both at once)
         run: bash scripts/engines/smoke-test.sh build/engines/out
 
       - name: Checksums for Package.swift

@@ -117,8 +117,9 @@ This page is the Mac side: how each feature is built here, and in what order.
   copied). Clicking the notification, or its Copy button, copies the dictation, and so does the menu bar's "Copy the
   text that wasn't typed". macOS asks for permission to show them at the first dictation, not at launch.
 - **Quitting** while a dictation is being transcribed or typed waits for it, 10 s at most, with the main thread free
-  (typing needs it). One still not typed by then is kept: in History, or, where History doesn't keep it, on the
-  pasteboard, which outlives ThumbFree; a notification says where. A recording is cancelled, as on Windows.
+  (typing needs it). One still not typed by then is kept, and nothing more of it is typed: it's in History, or, where
+  History doesn't keep it, on the pasteboard, which outlives ThumbFree; a notification says where. A recording is
+  cancelled, as on Windows.
 - Settings are in `~/Library/Application Support/ThumbFree/settings.json`. **History** (`history.txt`) and opt-in
   **samples** (`samples/`) are in `~/Library/Application Support/ThumbFree/Dictations.noindex`, in the same formats as
   Windows. The folder is named that way so that Spotlight never indexes the text of your dictations: Spotlight leaves

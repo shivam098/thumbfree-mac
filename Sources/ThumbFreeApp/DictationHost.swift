@@ -875,7 +875,10 @@ public final class DictationHost: @unchecked Sendable {
             detach(d, "The text box didn't take it.")
             return false
         } catch is FieldChanged {
-            detach(d, "You moved to another window or text box, so it wasn't typed there.")
+            let reason = d.kept.value
+                ? "ThumbFree quit before it was typed."
+                : "You moved to another window or text box, so it wasn't typed there."
+            detach(d, reason)
             return false
         } catch {
             Log.error("typing failed: \(Log.kind(of: error))")
@@ -906,8 +909,13 @@ public final class DictationHost: @unchecked Sendable {
         }
     }
 
-    /// The dictation's text box has the focus (or it can't be told in time while its app is in front).
+    /// The dictation's text box has the focus (or it can't be told in time while its app is in front). Never once
+    /// quitting has kept the dictation (`keepUnfinished`), so nothing more of it is typed.
     private func sameField(_ d: Dictation) -> Bool {
+        if d.kept.value {
+            return false
+        }
+
         let now = desktop.foregroundWindow()
         let same: Bool?
         if let field = d.field {

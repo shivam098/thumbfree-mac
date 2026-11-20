@@ -515,6 +515,25 @@ final class DictationHostTests: XCTestCase {
         XCTAssertTrue(services.history.entries().isEmpty)
     }
 
+    /// The Mac's own: once quitting has kept a dictation, nothing more of it is typed (here, the line after the line
+    /// break, which the typing reaches after the wait), and it's kept once.
+    func testNothingMoreOfADictationIsTypedOnceQuittingHasKeptIt() throws {
+        desktop.typeDelay = 1.5
+        let dictation = host.dictate(["Hello there new line how are you"], live: false)
+        let quit = Pending<Bool>()
+        host.finishForQuit(timeout: 0.3) { quit.resolve(true) }
+
+        XCTAssertEqual(quit.wait(timeout: 10), true)
+        let outcome = try XCTUnwrap(dictation.wait(timeout: 10))
+        XCTAssertTrue(outcome.kept)
+        XCTAssertFalse(outcome.typedAll)
+        XCTAssertFalse(desktop.typed.isEmpty)
+        XCTAssertFalse(desktop.typed.contains("are you"))
+        let kept = services.history.entries().map(\.text)
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertTrue(kept.first?.contains("are you") == true)
+    }
+
     /// A password box found when the box is read again, right before the first piece is typed (the web page described
     /// it by then), refuses the dictation: the recording stops, as for one found at the start, and it's said once.
     func testAPasswordBoxFoundWhenAWebPageDescribesItStopsTheRecording() throws {

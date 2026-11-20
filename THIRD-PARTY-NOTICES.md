@@ -16,12 +16,12 @@ notices. The app carries this file and both notices in `ThumbFree.app/Contents/R
 
 What the build checks (`scripts/engines/check-notice.py`): it sorts every global symbol an engine's library defines,
 in both architectures, into groups, by a C++ symbol's outermost namespace or class (or the function itself, outside
-any namespace) and by a C symbol's prefix, and fails unless a line of `scripts/engines/<engine>.claims` assigns every
-group to a library, and the notice has, word for word, the license files that line names: the library's own, or for
-what ONNX Runtime builds in, ONNX Runtime's third-party notices, with a section for that library. Only the C++
-standard library's groups and compiler helpers need no notice. Code that only appears inside another library's
-functions (inlined, or as a template argument) has no symbols of its own, so the other library's line covers it: Boost
-inside ONNX Runtime, for example.
+any namespace; for `google::`, which protobuf shares with glog and gflags, the next one too) and by a C symbol's
+prefix, and fails unless a line of `scripts/engines/<engine>.claims` assigns every group to a library, and the notice
+has, word for word, the license files that line names: the library's own, or for what ONNX Runtime builds in, ONNX
+Runtime's third-party notices, with a section for that library. Only the C++ standard library's groups and compiler
+helpers need no notice. Code that only appears inside another library's functions (inlined, or as a template argument)
+has no symbols of its own, so the other library's line covers it: Boost inside ONNX Runtime, for example.
 
 The code is used unmodified, with two marks for Xcode's linker, which no instruction or data depends on: ONNX
 Runtime's MLAS assembly kernels have the `MH_SUBSECTIONS_VIA_SYMBOLS` flag, with their inner labels as alternate

@@ -2,10 +2,11 @@
 """Fails unless an engine's notice covers everything linked into its static library.
 
 Every global symbol the library defines (nm -gjU) goes into a group by who wrote it: a C++ symbol's outermost namespace
-or class (or the function, in the global namespace), read from its mangled name; a C symbol's prefix, up to its first
-underscore. Each group must be claimed by a line of the engine's claims file (CSherpaOnnx.claims explains the columns),
-and each claiming line's license files must be in the notice word for word. A group nobody claims fails the check, so a
-library that's linked in but missing from the notice can't pass unnoticed.
+or class (or the function, in the global namespace), read from its mangled name, or for google::, which protobuf shares
+with glog and gflags, its first two ("google::protobuf"); a C symbol's prefix, up to its first underscore. Each group
+must be claimed by a line of the engine's claims file (CSherpaOnnx.claims explains the columns), and each claiming
+line's license files must be in the notice word for word. A group nobody claims fails the check, so a library that's
+linked in but missing from the notice can't pass unnoticed.
 
     scripts/engines/check-notice.py <static library> <notice> <claims file>
 
@@ -16,10 +17,15 @@ import re
 import subprocess
 import sys
 
+# Namespaces several libraries use: a symbol's group also has the next component ("google::protobuf"), because
+# protobuf, glog and gflags are all in google.
+SHARED_NAMESPACES = {'google'}
+
 
 class Mangled:
-    """The first component of an Itanium-mangled name (after its "_Z"): a namespace, class or function, "std",
-    "(builtin)" for type information of a built-in type, or "(operator)" for an operator outside any namespace."""
+    """The first component of an Itanium-mangled name (after its "_Z"): a namespace, class or function (with the next
+    component, for a shared namespace), "std", "(builtin)" for type information of a built-in type, or "(operator)" for
+    an operator outside any namespace."""
 
     def __init__(self, text):
         self.s = text
@@ -48,10 +54,13 @@ class Mangled:
         while self.peek() and self.peek() in 'rVKRO':
             self.i += 1
 
-    def prefix_first(self):
+    def prefix_first(self, nested=False):
         c = self.peek()
         if c.isdigit():
-            return self.source_name()
+            name = self.source_name()
+            if nested and name in SHARED_NAMESPACES and self.peek().isdigit():
+                return name + '::' + self.source_name()
+            return name
         if c == 'S':
             d = self.peek(1)
             return 'std' if d and d in 'tabdios' else '(substitution)'
@@ -66,7 +75,7 @@ class Mangled:
             return '(unnamed)'
         if c == 'L':
             self.i += 1
-            return self.prefix_first()
+            return self.prefix_first(nested)
         return None
 
     def type_first(self):
@@ -75,7 +84,7 @@ class Mangled:
             if c == 'N':
                 self.i += 1
                 self.skip_qualifiers()
-                return self.prefix_first()
+                return self.prefix_first(nested=True)
             if c and c in 'PROKVr':
                 self.i += 1
                 continue
@@ -92,7 +101,7 @@ class Mangled:
         if c == 'N':
             self.i += 1
             self.skip_qualifiers()
-            return self.prefix_first()
+            return self.prefix_first(nested=True)
         if c == 'L':
             self.i += 1
             return self.name_first()

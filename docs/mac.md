@@ -40,7 +40,8 @@ This page is the Mac side: how each feature is built here, and in what order.
 ## Audio and speech
 
 - `AVAudioEngine`, converted to 16 kHz mono; the **Microphone** permission.
-- The same models as Windows, each downloaded once and checked against its pinned SHA-256:
+- The same models as Windows, each downloaded once into `~/Library/Application Support/ThumbFree/models` and checked
+  against its pinned SHA-256 (models Jarvis for Mac already has are used from its folder, read only):
 
 | Choice | Model | Engine | Download |
 |---|---|---|---|
@@ -51,6 +52,16 @@ This page is the Mac side: how each feature is built here, and in what order.
 | Hindi + English, Accurate | Oriserve Whisper Hindi2Hinglish Apex | whisper.cpp (Metal) | 874 MB |
 
 - Silero VAD (whisper.cpp's) finds the pauses for Whisper and Parakeet, as on Windows.
+- **Engines,** linked statically: sherpa-onnx 2.0.1 (as on Windows) with ONNX Runtime 1.28.2, and whisper.cpp 1.9.5
+  with ggml (Metal and Accelerate). `.github/workflows/engines.yml` builds them from pinned sources into this repo's
+  `engines-sherpa-onnx-2.0.1-3` and `engines-whisper-1.9.5-3` releases, which Package.swift pins by checksum.
+- **Warm-up:** ggml compiles all its Metal shaders when it's first used, even for Silero, which runs on the CPU: 19–27 s
+  on CI's virtual GPU, still to be measured on a real Mac. So when the chosen model uses Silero or Whisper (Parakeet,
+  or Hindi + English), the app calls `ThumbFreeSpeech.warmUp()` in the background at launch and when switching to it.
+  English Live (Kroko) uses neither, so it doesn't warm up.
+- **Notices:** each engine's zip has a notice with the license of everything linked into it (the build checks it
+  against the library's symbols), and `scripts/make-app.sh` puts both, with `THIRD-PARTY-NOTICES.md`, in
+  `ThumbFree.app/Contents/Resources`.
 - Target on Apple silicon: under 0.3 s per phrase in English.
 
 ## Typing into other apps
@@ -115,7 +126,7 @@ This page is the Mac side: how each feature is built here, and in what order.
 | Phase | Done when | Status (November 2026) |
 |---|---|---|
 | 1. Core in Swift | The shared vectors and the ported unit tests pass on macOS CI | Done |
-| 2. Speech engines | Kroko, Parakeet and Whisper with Silero transcribe `tests/audio` on macOS CI | In review |
+| 2. Speech engines | Kroko, Parakeet and Whisper with Silero transcribe `tests/audio` on macOS CI | Done |
 | 3. App | Menu bar, Fn, microphone, pill, typing with the same-field check, notifications | The parts are in: Fn, the microphone, the permissions, reading the box, typing, the pill. Next: the dictation host and the menu bar |
 | 4. Window and guide | Home, History, Settings, Help, the first-run guide, the word list and dictionary | |
 | 5. Test builds | A `.dmg` from CI passes the real-Mac checklist | CI builds the `.dmg`; the checklists are in PRs #1, #2 and #4 |

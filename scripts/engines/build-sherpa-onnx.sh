@@ -19,12 +19,8 @@ package_sha256=bd4cdc1c4122d249c46187fb36528733186f7bf52e8ceae716bd37255550a567
 header_sha256=5698f38ba09ad2bdf085c56a6cbbd7741acf15e25f4ce5c7097b9702cadf437f
 license_sha256=cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 
-# The onnxruntime in sherpa-onnx's static libraries: release v1.28.2 of csukuangfj/onnxruntime-libs, built from ONNX
-# Runtime's tag. Its license and third-party notices come from the same release's package for macOS.
-onnxruntime_version=1.28.2
-onnxruntime_commit=33ca9628233dc8f002435e868d4c2e9f82766ca1
-onnxruntime_package=onnxruntime-osx-arm64-$onnxruntime_version
-onnxruntime_package_sha256=d9e5c0c79929e201f5b8eb095e6809a91ce78be9866a1bca0dfab7e20b40ae40
+# The onnxruntime in sherpa-onnx's static libraries (its package is pinned in common.sh): its license and third-party
+# notices, from that package.
 onnxruntime_license_sha256=2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c
 onnxruntime_notices_sha256=0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2
 
@@ -68,8 +64,7 @@ fetch "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v$version/LICENSE" L
 tar -xjf "$package.tar.bz2"
 
 # The license texts for the notice, each pinned.
-release=https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$onnxruntime_version
-fetch "$release/$onnxruntime_package.zip" "$onnxruntime_package.zip" "$onnxruntime_package_sha256"
+fetch "$onnxruntime_release/$onnxruntime_package.zip" "$onnxruntime_package.zip" "$onnxruntime_package_sha256"
 unzip -q -j -d onnxruntime "$onnxruntime_package.zip" "$onnxruntime_package/LICENSE" \
   "$onnxruntime_package/ThirdPartyNotices.txt" "$onnxruntime_package/VERSION_NUMBER" \
   "$onnxruntime_package/GIT_COMMIT_ID"

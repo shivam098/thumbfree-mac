@@ -18,6 +18,24 @@ final class Flag: @unchecked Sendable {
     }
 }
 
+/// A number changed from any thread and read from another.
+final class Count: @unchecked Sendable {
+    private let lock = NSLock()
+    private var number = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return number
+    }
+
+    func add(_ amount: Int) {
+        lock.lock()
+        number += amount
+        lock.unlock()
+    }
+}
+
 /// One holder at a time for async code, waiting in order (C#'s `SemaphoreSlim(1, 1)` with `WaitAsync(token)`): a task
 /// cancelled while it waits stops waiting with `CancellationError`.
 final class AsyncGate: @unchecked Sendable {

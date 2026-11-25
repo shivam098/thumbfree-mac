@@ -1,4 +1,5 @@
 import CSherpaOnnx
+import CWhisper
 import Foundation
 import MachO
 import ThumbFreeCore
@@ -356,6 +357,122 @@ final class RecognizerTests: XCTestCase {
         XCTAssertThrowsError(try model.transcribeResult(Audio.silence(ms: 1000))) {
             XCTAssertEqual($0 as? SpeechError, .closed)
         }
+    }
+
+    func testWhisperOptionsSetWhatTheyNameAndTheDefaultsKeepWhisperCppsValues() {
+        let whisper = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+
+        // ThumbFree's options: no token limit and temperature fallback, as before.
+        let thumbFree = WhisperRecognizer.parameters(RecognizerOptions(threads: 3, audioContextSize: 768))
+        XCTAssertEqual(thumbFree.n_threads, 3)
+        XCTAssertEqual(thumbFree.audio_ctx, 768)
+        XCTAssertEqual(thumbFree.max_tokens, whisper.max_tokens)
+        XCTAssertEqual(thumbFree.temperature, whisper.temperature)
+        XCTAssertEqual(thumbFree.temperature_inc, whisper.temperature_inc)
+        XCTAssertGreaterThan(thumbFree.temperature_inc, 0)
+        XCTAssertTrue(thumbFree.no_context && thumbFree.single_segment)
+        XCTAssertEqual(WhisperRecognizer.parameters(RecognizerOptions(threads: 3)).audio_ctx, whisper.audio_ctx)
+
+        // Jarvis's standby check, as Windows sets it through Whisper.net.
+        let standby = WhisperRecognizer.parameters(
+            RecognizerOptions(threads: 2, audioContextSize: 256, maxTokens: 8, temperatureFallback: false))
+        XCTAssertEqual(standby.n_threads, 2)
+        XCTAssertEqual(standby.audio_ctx, 256)
+        XCTAssertEqual(standby.max_tokens, 8)
+        XCTAssertEqual(standby.temperature, whisper.temperature)
+        XCTAssertEqual(standby.temperature_inc, 0)
+    }
+
+    func testWhisperRunsItsLoadedModelWithASecondSetOfOptions() throws {
+        let spec = try TestModels.require("hinglish-swift")
+        let path = try XCTUnwrap(TestModels.store.pathOf(spec.files[0]))
+        let loaded = WhisperRecognizer.loadedModels
+        let model = try WhisperRecognizer(modelPath: path, options: RecognizerOptions(threads: TestModels.threads))
+        defer { model.close() }
+
+        // Room for every token: the same text as the model's own options, from the same copy in memory.
+        let roomy = try model.withOptions(RecognizerOptions(threads: TestModels.threads, maxTokens: 200))
+        defer { roomy.close() }
+        XCTAssertEqual(WhisperRecognizer.loadedModels, loaded + 1)
+        let clips = try [Audio.read("send-logs.wav"), Audio.read("genres.wav")]
+        for clip in clips {
+            let text = try model.transcribeResult(clip).text
+            XCTAssertFalse(text.isEmpty)
+            XCTAssertEqual(try roomy.transcribeResult(clip).text, text)
+        }
+
+        // Three tokens, decoded once: the start of what the same options without a limit give.
+        let once = try model.withOptions(RecognizerOptions(threads: TestModels.threads, temperatureFallback: false))
+        defer { once.close() }
+        let short = try model.withOptions(
+            RecognizerOptions(threads: TestModels.threads, maxTokens: 3, temperatureFallback: false))
+        defer { short.close() }
+        let whole = try once.transcribeResult(clips[0]).text
+        let start = try short.transcribeResult(clips[0]).text
+        print("whisper hinglish, 3 tokens: \(start) | no limit: \(whole)")
+        XCTAssertFalse(start.isEmpty)
+        XCTAssertLessThan(start.count, whole.count)
+        XCTAssertTrue(whole.hasPrefix(start), "\(start) | \(whole)")
+
+        // Jarvis's standby check on the first 3 s of a phrase: 2 threads, a 256 audio context, 8 tokens, no fallback.
+        let standby = try model.withOptions(
+            RecognizerOptions(threads: 2, audioContextSize: 256, maxTokens: 8, temperatureFallback: false))
+        defer { standby.close() }
+        let full = try model.transcribeResult(clips[0])
+        let check = try standby.transcribeResult(Array(clips[0].prefix(Decoding.sampleRate * 3)))
+        print("whisper hinglish standby check: \(Int(check.elapsed * 1000)) ms: \(check.text) | "
+            + "full: \(Int(full.elapsed * 1000)) ms")
+        XCTAssertTrue(containsIgnoringCase(check.text, "send"), check.text)
+    }
+
+    func testWhisperModelStaysLoadedUntilEveryRecognizerSharingItLetsGo() throws {
+        let spec = try TestModels.require("hinglish-swift")
+        let path = try XCTUnwrap(TestModels.store.pathOf(spec.files[0]))
+        let clip = try Audio.read("send-logs.wav")
+        let options = RecognizerOptions(threads: TestModels.threads)
+        let loaded = WhisperRecognizer.loadedModels
+        var original: WhisperRecognizer? = try WhisperRecognizer(modelPath: path, options: options)
+
+        // One made from it closed, and one released: the original goes on.
+        let closed = try XCTUnwrap(original).withOptions(options)
+        closed.close()
+        XCTAssertThrowsError(try closed.transcribeResult(clip)) { XCTAssertEqual($0 as? SpeechError, .closed) }
+        XCTAssertThrowsError(try closed.withOptions(options)) { XCTAssertEqual($0 as? SpeechError, .closed) }
+        var released: WhisperRecognizer? = try XCTUnwrap(original).withOptions(options)
+        XCTAssertTrue(containsIgnoringCase(try released?.transcribeResult(clip).text, "build logs"))
+        released = nil
+        XCTAssertTrue(containsIgnoringCase(try original?.transcribeResult(clip).text, "build logs"))
+
+        // The original released first, then a closed one: the last goes on, and the model is freed with it.
+        let derived = try XCTUnwrap(original).withOptions(options)
+        original = nil
+        XCTAssertTrue(containsIgnoringCase(try derived.transcribeResult(clip).text, "build logs"))
+        let last = try derived.withOptions(options)
+        derived.close()
+        XCTAssertEqual(WhisperRecognizer.loadedModels, loaded + 1)
+        XCTAssertTrue(containsIgnoringCase(try last.transcribeResult(clip).text, "build logs"))
+        last.close()
+        XCTAssertEqual(WhisperRecognizer.loadedModels, loaded)
+    }
+
+    func testWhisperRecognizersSharingAModelRunAtTheSameTime() throws {
+        let spec = try TestModels.require("hinglish-swift")
+        let path = try XCTUnwrap(TestModels.store.pathOf(spec.files[0]))
+        let model = try WhisperRecognizer(modelPath: path, options: RecognizerOptions(threads: 2))
+        defer { model.close() }
+        let other = try model.withOptions(RecognizerOptions(threads: 2, maxTokens: 200))
+        defer { other.close() }
+        let clips = try [Audio.read("send-logs.wav"), Audio.read("genres.wav")]
+        let alone = try [model.transcribeResult(clips[0]).text, other.transcribeResult(clips[1]).text]
+
+        // Two calls on each, all at once: each one's calls take turns, and the two run side by side.
+        let together = Locked<[Int: String]>([:])
+        DispatchQueue.concurrentPerform(iterations: 4) { i in
+            let text = (try? (i % 2 == 0 ? model : other).transcribeResult(clips[i % 2]).text) ?? "failed"
+            together.update { $0[i] = text }
+        }
+
+        XCTAssertEqual(together.value, [0: alone[0], 1: alone[1], 2: alone[0], 3: alone[1]])
     }
 
     func testSileroFindsTheSpeechAndThePauseBetweenTwoClips() throws {

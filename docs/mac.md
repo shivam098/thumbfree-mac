@@ -63,6 +63,10 @@ This page is the Mac side: how each feature is built here, and in what order.
 | Hindi + English, Accurate | Oriserve Whisper Hindi2Hinglish Apex | whisper.cpp (Metal) | 874 MB |
 
 - Silero VAD (whisper.cpp's) finds the pauses for Whisper and Parakeet, as on Windows.
+- A loaded Whisper model can also run with a second set of options without a second copy in memory
+  (`WhisperRecognizer.withOptions`, Whisper.net's `WithOptions` on Windows). Jarvis's standby check runs its model that
+  way on the start of each phrase: 2 threads, a 256 audio context, 8 tokens and no temperature fallback. Each call has
+  its own whisper.cpp state, so recognizers sharing a model can run at the same time.
 - **Engines,** linked statically: sherpa-onnx 2.0.1 (as on Windows) with ONNX Runtime 1.28.2, and whisper.cpp 1.9.5
   with ggml (Metal and Accelerate). `.github/workflows/engines.yml` builds them from pinned sources into this repo's
   `engines-sherpa-onnx-2.0.1-3` and `engines-whisper-1.9.5-3` releases, which Package.swift pins by checksum.

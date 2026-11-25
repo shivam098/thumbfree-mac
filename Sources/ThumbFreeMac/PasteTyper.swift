@@ -453,13 +453,13 @@ extension PasteTyper {
         }()
     }
 
-    /// Why nothing was typed.
+    /// Why nothing was typed. Messages that name the app name the one they run in (`ThumbFreeMac.appName`).
     public enum Failure: Error, Equatable, LocalizedError {
         /// Something kept being copied while the paste waited.
         case pasteboardKeptChanging
         /// The text couldn't be put on the pasteboard.
         case pasteboardUnavailable
-        /// ThumbFree may not send keys: it hasn't the permission to (`permission`).
+        /// The app may not send keys: it hasn't the permission to (`permission`).
         case notAllowed
         /// A password is being typed somewhere (secure input is on).
         case secureInput
@@ -473,18 +473,21 @@ extension PasteTyper {
             self == .notAllowed ? .postEvents : nil
         }
 
-        public var errorDescription: String? {
+        public var errorDescription: String? { message(naming: ThumbFreeMac.appName) }
+
+        /// The message, with `app` as the app's name.
+        func message(naming app: String) -> String {
             switch self {
             case .pasteboardKeptChanging:
                 return "The pasteboard kept changing, so nothing was pasted."
             case .pasteboardUnavailable:
                 return "The text couldn't be put on the pasteboard."
             case .notAllowed:
-                return "ThumbFree may not type: it needs the Accessibility permission."
+                return "\(app) may not type: it needs the Accessibility permission."
             case .secureInput:
                 return "A password is being typed, so nothing was typed."
             case .secureInputUnknown:
-                return "ThumbFree couldn't tell whether a password is being typed, so nothing was typed."
+                return "\(app) couldn't tell whether a password is being typed, so nothing was typed."
             case .keysUnavailable:
                 return "The keys couldn't be sent."
             }

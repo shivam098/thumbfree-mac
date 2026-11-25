@@ -19,6 +19,15 @@ public struct FnTapKeys: Sendable {
         case fn
         /// Right Option, for a keyboard whose Fn key macOS doesn't see, or when Fn already does something else.
         case rightOption
+
+        /// The key's name in settings.json ("dictationKey"), ThumbFree's and Jarvis's alike: "Fn" or "RightOption".
+        /// Settings files keep it, so it never changes.
+        public var settingsName: String {
+            switch self {
+            case .fn: return "Fn"
+            case .rightOption: return "RightOption"
+            }
+        }
     }
 
     /// A key as far as the dictation keys care.

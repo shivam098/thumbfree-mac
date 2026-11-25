@@ -27,6 +27,7 @@ final class TestServer: @unchecked Sendable {
     private let lock = NSLock()
     private var files: [String: Data] = [:]
     private var log: [String] = []
+    private var agents: [String] = []
     private var reply: @Sendable (Int) -> Reply = { _ in .normal }
     private var connections: [NWConnection] = []
     private var closing = false
@@ -74,6 +75,13 @@ final class TestServer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return log
+    }
+
+    /// The User-Agent of every request so far ("" for none).
+    var userAgents: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return agents
     }
 
     /// Serves `bytes` as `name`; returns its URL.
@@ -138,8 +146,11 @@ final class TestServer: @unchecked Sendable {
         let name = String(target.drop { $0 == "/" })
         let rangeLine = lines.dropFirst().first { $0.lowercased().hasPrefix("range:") }
         let range = rangeLine.map { $0.dropFirst(6).trimmingCharacters(in: .whitespaces) }
+        let agentLine = lines.dropFirst().first { $0.lowercased().hasPrefix("user-agent:") }
+        let agent = agentLine.map { $0.dropFirst(11).trimmingCharacters(in: .whitespaces) }
         lock.lock()
         log.append("\(name) \(range ?? "-")")
+        agents.append(agent ?? "")
         let behaviour = reply(log.count)
         let bytes = files[name]
         lock.unlock()

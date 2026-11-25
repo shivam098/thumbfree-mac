@@ -566,14 +566,8 @@ extension Tier: SettingsChoice {
     }
 }
 
-extension FnTapKeys.TapKey: SettingsChoice {
-    var settingsName: String {
-        switch self {
-        case .fn: return "Fn"
-        case .rightOption: return "RightOption"
-        }
-    }
-}
+/// ThumbFreeMac names the keys (`FnTapKeys.TapKey.settingsName`), so Jarvis's settings name them the same way.
+extension FnTapKeys.TapKey: SettingsChoice {}
 
 extension PersonalDictionary {
     /// The personal dictionary as Settings shows it (thumbfree-windows App's `PersonalDictionary`): one "what it hears

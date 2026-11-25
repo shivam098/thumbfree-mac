@@ -41,6 +41,9 @@ public final class ModelStore: @unchecked Sendable {
     /// The verified-files index in the primary folder (kept by `removeLeftovers`), in the Windows app's format.
     public static let indexFileName = "verified.tsv"
 
+    /// ThumbFree's User-Agent: what its downloads say they come from. Another app gives its own name (`userAgent`).
+    public static let defaultUserAgent = "ThumbFree"
+
     private static let maxAttempts = 5
     private static let spaceMargin: Int64 = 50_000_000
     fileprivate static let reportEvery: Int64 = 512 * 1024
@@ -49,12 +52,14 @@ public final class ModelStore: @unchecked Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         configuration.urlCache = nil
-        configuration.httpAdditionalHeaders = ["User-Agent": "ThumbFree"]
         return URLSession(configuration: configuration)
     }()
 
     public let primaryFolder: String
     public let sharedFolders: [String]
+
+    /// What each download request says it comes from (its User-Agent): `defaultUserAgent` unless the app gave its own.
+    public let userAgent: String
 
     /// Wait before retrying a failed file: attempt n waits n times this (2, 4, 6, 8 s, as on Android).
     public let retryDelay: TimeInterval
@@ -74,10 +79,12 @@ public final class ModelStore: @unchecked Sendable {
     /// - Parameters:
     ///   - primaryFolder: Where downloads go (the app passes `ModelStore.defaultFolder`).
     ///   - sharedFolders: Other apps' model folders, read only (the app passes `ModelStore.defaultSharedFolders`).
+    ///   - userAgent: The app's name, sent as each request's User-Agent (ThumbFree's by default).
     ///   - session: For tests; by default one shared session that caches nothing.
     public init(
         primaryFolder: String,
         sharedFolders: [String] = [],
+        userAgent: String = ModelStore.defaultUserAgent,
         session: URLSession? = nil,
         retryDelay: TimeInterval = 2,
         readTimeout: TimeInterval = 30
@@ -92,6 +99,7 @@ public final class ModelStore: @unchecked Sendable {
 
         self.primaryFolder = primary
         self.sharedFolders = shared
+        self.userAgent = userAgent
         self.session = session ?? ModelStore.defaultSession
         self.retryDelay = retryDelay
         self.readTimeout = readTimeout
@@ -170,14 +178,16 @@ public final class ModelStore: @unchecked Sendable {
         }
     }
 
-    /// Deletes what this version doesn't use from the primary folder: files that aren't a current model file (or its
-    /// partial download), such as models older versions used, then empty folders. Shared folders belong to other apps
-    /// and are never touched, even one inside the primary folder.
-    public func removeLeftovers() {
+    /// Deletes from the primary folder the files its app doesn't keep, such as models older versions used, then empty
+    /// folders. `catalog` is what the app keeps: its model files' paths, relative to the folder (`ModelFile.path`).
+    /// ThumbFree passes `ModelCatalog.knownPaths`; an app with other models passes its own, so they're never deleted.
+    /// Partial downloads of those files and the verified-files index stay too. Shared folders belong to other apps and
+    /// are never touched, even one inside the primary folder.
+    public func removeLeftovers(keeping catalog: some Sequence<String>) {
         guard Files.isDirectory(primaryFolder) else { return }
         guard let entries = FileManager.default.enumerator(atPath: primaryFolder) else { return }
 
-        let known = ModelCatalog.knownPaths.flatMap { [$0, $0 + ".part"] } + [Self.indexFileName]
+        let known = catalog.flatMap { [$0, $0 + ".part"] } + [Self.indexFileName]
         let keep = Set(known.map { $0.lowercased() })
         var files: [String] = []
         var folders: [String] = []
@@ -414,6 +424,7 @@ public final class ModelStore: @unchecked Sendable {
         guard let url = URL(string: file.url) else { throw DownloadError("Bad address.") }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
                                  timeoutInterval: max(60, readTimeout * 2))
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         if have > 0 {
             request.setValue("bytes=\(have)-", forHTTPHeaderField: "Range")

@@ -217,29 +217,40 @@ extension PasteTyper {
         }
 
         private func updatePasteKey() {
-            let key = Self.keyCode(typing: "v") ?? CGKeyCode(kVK_ANSI_V)
+            let key = Self.keyCode(typing: "v", with: .command) ?? CGKeyCode(kVK_ANSI_V)
             lock.withLock { pasteKey = key }
         }
 
-        /// The key that types `character` with ⌘ held in the layout ⌘ shortcuts use: the current one, or for a
-        /// non-Latin one (Russian, Greek…) the Latin layout that goes with it. Main thread only.
-        static func keyCode(typing character: Character) -> CGKeyCode? {
+        /// The key to press for `character` (one UTF-16 unit, such as a letter or a digit) with `modifiers`, in the
+        /// keyboard layout in use: with ⌘ among them, the key that types it while ⌘ is held, as ⌘V's key types "v";
+        /// otherwise the key that types it alone. They differ in layouts such as "Dvorak – QWERTY ⌘", which types
+        /// QWERTY while ⌘ is held. ⇧, ⌥, ⌃ and Fn don't change the key, so a shortcut's modifiers can be passed as
+        /// they are. The layout is the one ⌘ shortcuts use: the current one, or for a non-Latin one (Russian,
+        /// Greek…) the Latin layout that goes with it. Nil when no key types `character`.
+        ///
+        /// Main thread only, as Text Input Sources answers there only: a call from any other thread stops the app.
+        /// Find the keys there and keep them, as `SystemKeys` keeps ⌘V's and finds it again when the keyboard layout
+        /// changes (kTISNotifySelectedKeyboardInputSourceChanged).
+        public static func keyCode(typing character: Character, with modifiers: Modifiers) -> CGKeyCode? {
+            dispatchPrecondition(condition: .onQueue(.main))
             guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue() else {
                 return nil
             }
 
-            return keyCode(typing: character, in: source)
+            return keyCode(typing: character, in: source, with: modifiers)
         }
 
-        /// The key that types `character` with ⌘ held in `layout` (with ⌘, "Dvorak – QWERTY ⌘" types QWERTY), found
-        /// with UCKeyTranslate. Main thread only.
-        static func keyCode(typing character: Character, in layout: TISInputSource) -> CGKeyCode? {
+        /// The key that types `character` in `layout`, with ⌘ held if `modifiers` has it (with ⌘, "Dvorak – QWERTY ⌘"
+        /// types QWERTY), found with UCKeyTranslate. Main thread only.
+        static func keyCode(typing character: Character, in layout: TISInputSource, with modifiers: Modifiers)
+            -> CGKeyCode?
+        {
             guard character.utf16.count == 1, let unit = character.utf16.first,
                   let property = TISGetInputSourceProperty(layout, kTISPropertyUnicodeKeyLayoutData) else { return nil }
             let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
             guard let bytes = CFDataGetBytePtr(data) else { return nil }
 
-            let command = UInt32((cmdKey >> 8) & 0xFF)
+            let command = modifiers.contains(.command) ? UInt32((cmdKey >> 8) & 0xFF) : 0
             let keyboard = UInt32(LMGetKbdType())
             let options = OptionBits(kUCKeyTranslateNoDeadKeysMask)
             return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { keys -> CGKeyCode? in

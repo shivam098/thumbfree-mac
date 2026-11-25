@@ -207,7 +207,7 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertEqual(store.pathOf(spec.files[0]), (inside as NSString).appendingPathComponent("ggml-shared.bin"))
         XCTAssertEqual(store.directoryOf(spec), inside)
         try await store.download(spec)
-        store.removeLeftovers()
+        store.removeLeftovers(keeping: ModelCatalog.knownPaths)
         store.delete(spec)
 
         XCTAssertEqual(server.requests, [])
@@ -274,7 +274,7 @@ final class ModelStoreTests: XCTestCase {
         let alongside = try sharedFolder("voice-dictation")
         let before = try snapshot(inside, alongside)
 
-        makeStore([inside, alongside]).removeLeftovers()
+        makeStore([inside, alongside]).removeLeftovers(keeping: ModelCatalog.knownPaths)
 
         for path in keep {
             XCTAssertTrue(FileManager.default.fileExists(atPath: scratch.file("models/" + path)), path)
@@ -287,6 +287,57 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.file("models/old-model")))
         XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.file("models/empty")))
         XCTAssertEqual(try snapshot(inside, alongside), before)
+    }
+
+    func testRemoveLeftoversKeepsTheCatalogItIsGivenSoAnotherAppKeepsItsModels() throws {
+        // Jarvis's folder: its own Whisper models, two of ThumbFree's models it uses too, and files in neither list.
+        let jarvis = ["ggml-small.en-q8_0.bin", "ggml-base.en-q8_0.bin", "ggml-base.en.bin"]
+        let thumbFree = [ModelCatalog.vad.path, ModelCatalog.hinglish.files[0].path]
+        let kept = jarvis + thumbFree + ["ggml-base.en.bin.part", ModelStore.indexFileName]
+        let neither = [
+            "ggml-tiny.en.bin", "ggml-small.en-q8_0.bin.partial", ModelCatalog.englishLive.files[0].path,
+            "old-model/encoder.onnx",
+        ]
+        try writeFiles(kept + neither, in: "models")
+        let inside = try sharedFolder("models/thumbfree")
+        let alongside = try sharedFolder("thumbfree")
+        let before = try snapshot(inside, alongside)
+
+        makeStore([inside, alongside]).removeLeftovers(keeping: jarvis + thumbFree)
+
+        for path in kept {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: scratch.file("models/" + path)), path)
+        }
+
+        for path in neither {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.file("models/" + path)), path)
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.file("models/kroko-en-live")))
+        XCTAssertEqual(try snapshot(inside, alongside), before)
+
+        // ThumbFree's catalog, as before: Jarvis's Whisper models aren't in it.
+        makeStore([inside, alongside]).removeLeftovers(keeping: ModelCatalog.knownPaths)
+
+        for path in jarvis {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.file("models/" + path)), path)
+        }
+
+        for path in thumbFree {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: scratch.file("models/" + path)), path)
+        }
+
+        XCTAssertEqual(try snapshot(inside, alongside), before)
+    }
+
+    func testDownloadsSayWhichAppTheyComeFrom() async throws {
+        let spec = makeSpec(serve("model.bin", randomBytes(21, 1_000)))
+        let jarvis = ModelStore(primaryFolder: scratch.file("jarvis"), userAgent: "Jarvis", session: Self.http)
+
+        try await makeStore().download(spec)
+        try await jarvis.download(spec)
+
+        XCTAssertEqual(server.userAgents, ["ThumbFree", "Jarvis"])
     }
 
     /// Deterministic bytes for a seed (SplitMix64). The C# tests use `new Random(seed).NextBytes`, which this doesn't
@@ -338,6 +389,16 @@ final class ModelStoreTests: XCTestCase {
     }
 
     private func url(_ relative: String) -> URL { URL(fileURLWithPath: scratch.file(relative)) }
+
+    /// A one-byte file at each of `paths` in `folder`, with the folders it's in.
+    private func writeFiles(_ paths: [String], in folder: String) throws {
+        for path in paths {
+            let file = scratch.file(folder + "/" + path)
+            try FileManager.default.createDirectory(
+                atPath: (file as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: URL(fileURLWithPath: file))
+        }
+    }
 
     /// Every file below `folder`, relative to it.
     private func filesUnder(_ folder: String) -> [String] {

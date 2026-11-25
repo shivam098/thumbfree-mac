@@ -463,8 +463,33 @@ final class PasteTyperTests: XCTestCase {
             ("com.apple.keylayout.DVORAK-QWERTYCMD", kVK_ANSI_V),
         ] {
             let source = try XCTUnwrap(inputSource(layout), "\(layout) isn't on this Mac")
-            XCTAssertEqual(CGKeyCode(key), PasteTyper.SystemKeys.keyCode(typing: "v", in: source), layout)
+            let found = PasteTyper.SystemKeys.keyCode(typing: "v", in: source, with: .command)
+            XCTAssertEqual(CGKeyCode(key), found, layout)
         }
+    }
+
+    func testTheKeyThatTypesACharacterIsFoundWithCommandOrWithout() throws {
+        // Without ⌘, "Dvorak – QWERTY ⌘" is Dvorak; only ⌘ changes which key a shortcut's letter is.
+        for (layout, withCommand, alone) in [
+            ("com.apple.keylayout.US", kVK_ANSI_Z, kVK_ANSI_Z),
+            ("com.apple.keylayout.Dvorak", kVK_ANSI_Slash, kVK_ANSI_Slash),
+            ("com.apple.keylayout.DVORAK-QWERTYCMD", kVK_ANSI_Z, kVK_ANSI_Slash),
+        ] {
+            let source = try XCTUnwrap(inputSource(layout), "\(layout) isn't on this Mac")
+            let key = { (modifiers: PasteTyper.Modifiers) in
+                PasteTyper.SystemKeys.keyCode(typing: "z", in: source, with: modifiers)
+            }
+
+            XCTAssertEqual(CGKeyCode(withCommand), key(.command), layout)
+            XCTAssertEqual(CGKeyCode(withCommand), key([.command, .shift, .option, .control]), layout)
+            XCTAssertEqual(CGKeyCode(alone), key([]), layout)
+            XCTAssertEqual(CGKeyCode(alone), key([.shift, .option, .control, .function]), layout)
+            XCTAssertNil(PasteTyper.SystemKeys.keyCode(typing: "ж", in: source, with: []), layout)
+        }
+
+        // The layout in use, read on the main thread, where tests run.
+        XCTAssertNotNil(PasteTyper.SystemKeys.keyCode(typing: "v", with: .command))
+        XCTAssertNotNil(PasteTyper.SystemKeys.keyCode(typing: "v", with: []))
     }
 
     func testKeysCarryTheLeftHandModifierKeysOwnFlags() {
@@ -516,6 +541,24 @@ final class PasteTyperTests: XCTestCase {
         XCTAssertEqual(.postEvents, PasteTyper.Failure.notAllowed.permission)
         XCTAssertNil(PasteTyper.Failure.secureInput.permission)
         XCTAssertEqual([], system.prompts, "checking never asks")
+    }
+
+    func testTheMessagesNameTheAppThatRuns() {
+        // ThumbFree's words in ThumbFree, the same with Jarvis's name in Jarvis.
+        XCTAssertEqual(
+            "ThumbFree may not type: it needs the Accessibility permission.",
+            PasteTyper.Failure.notAllowed.message(naming: "ThumbFree"))
+        XCTAssertEqual(
+            "Jarvis couldn't tell whether a password is being typed, so nothing was typed.",
+            PasteTyper.Failure.secureInputUnknown.message(naming: "Jarvis"))
+        let failures: [PasteTyper.Failure] = [
+            .pasteboardKeptChanging, .pasteboardUnavailable, .notAllowed, .secureInput, .secureInputUnknown,
+            .keysUnavailable,
+        ]
+        for failure in failures {
+            XCTAssertFalse(failure.message(naming: "Jarvis").contains("ThumbFree"), "\(failure)")
+            XCTAssertEqual(failure.message(naming: ThumbFreeMac.appName), failure.errorDescription, "\(failure)")
+        }
     }
 
     // MARK: Helpers

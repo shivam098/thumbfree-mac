@@ -154,6 +154,11 @@ final class FnTapKeysTests: XCTestCase {
         XCTAssertFalse(keys.isRecording)
     }
 
+    /// settings.json files keep these names, ThumbFree's and Jarvis's alike.
+    func testTheKeysAreNamedAsSettingsFilesNameThem() {
+        XCTAssertEqual(["Fn", "RightOption"], FnTapKeys.TapKey.allCases.map(\.settingsName))
+    }
+
     func testAKeyHeldFromBeforeAndLetGoDuringTheTapDoesNotSpoilIt() {
         var keys = FnTapKeys()
         _ = keys.process(.other, down: true)

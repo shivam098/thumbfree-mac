@@ -317,6 +317,7 @@ extension Pill {
         static func inset(_ size: CGFloat) -> CGFloat { size * 6 / 256 }
 
         /// The microphone alone, as a template image for the menu bar: the Material icon's 24 units in 18 points.
+        /// VoiceOver reads it as the app's name (`ThumbFreeMac.appName`).
         public static func menuBarImage() -> NSImage {
             let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
                 guard let context = NSGraphicsContext.current?.cgContext else { return false }
@@ -326,7 +327,7 @@ extension Pill {
             }
 
             image.isTemplate = true
-            image.accessibilityDescription = "ThumbFree"
+            image.accessibilityDescription = ThumbFreeMac.appName
             return image
         }
 

@@ -10,7 +10,9 @@ This page is the Mac side: how each feature is built here, and in what order.
   copy of the shared test data (`tests/vectors`, `tests/audio`), and a CI check fails while the copies differ.
 - **Two Mac apps, one Mac engine.** ThumbFree (private dictation, no wake word) is built here first. Jarvis (dictation
   plus "Hey Jarvis" commands and the AI brain) follows in its own repo, mac-voice-assistant, reusing this repo's Swift
-  packages for audio, speech, the hotkey, the pill and typing.
+  packages for audio, speech, the hotkey, the pill and typing. The packages speak for the app they run in, not for
+  ThumbFree: their messages take the app's name from its bundle, model downloads send the app's User-Agent, and
+  cleaning up a models folder keeps the models the app lists.
 - **Same hotkey for both: Fn (🌐).** Run one app at a time; each one warns you when the other is running, as on Windows.
 - **The core is Swift.** The shared logic (formatting, emails, lists and corrections, live typing, field rules, the word
   list) is a Swift version of the Windows C# core, held to the same test data, like Windows. No Kotlin Multiplatform.

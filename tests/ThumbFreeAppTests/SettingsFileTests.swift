@@ -138,6 +138,15 @@ final class SettingsFileTests: XCTestCase {
         let store = SettingsStore(AppSettings.load(from: path), path: path)
         XCTAssertEqual(store.current.dictationKey, .fn)
         XCTAssertTrue(try XCTUnwrap(store.lastError).contains("“dictationKey” should be Fn or RightOption"))
+
+        // By the names ThumbFreeMac gives the keys, which Jarvis's settings use too.
+        for key in FnTapKeys.TapKey.allCases {
+            var settings = AppSettings()
+            settings.dictationKey = key
+            XCTAssertTrue(settings.fileText.contains("\"dictationKey\": \"\(key.settingsName)\""), "\(key)")
+            try settings.save(to: path)
+            XCTAssertEqual(AppSettings.load(from: path).dictationKey, key)
+        }
     }
 
     /// A trailing comma after a line comment that ends at a carriage return alone is seen as one, so a new key gets no

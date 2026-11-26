@@ -380,7 +380,7 @@ final class FocusedFieldTests: XCTestCase {
         XCTAssertEqual(1, system.flagsAsked, "woken once")
     }
 
-    func testAWakeCountsOnlyOnceTheAppHasTakenIt() throws {
+    func testAnAppThatDoesntAnswerIsAskedAgain() throws {
         let system = FakeAXSystem()
         system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.brave.Browser")
         let app = try XCTUnwrap(system.application(chrome) as? FakeAXField)
@@ -388,17 +388,89 @@ final class FocusedFieldTests: XCTestCase {
         let reader = FocusedField.Reader(source: system)
         reader.startWaking()
 
-        // Still starting, it refuses the flag, so it's asked again the next time it comes to the front.
-        system.takesFlags = false
+        // Still starting, it doesn't answer, so it's asked again the next time it comes to the front.
+        system.flagAnswer = .noAnswer
         system.activate(chrome)
         XCTAssertEqual([:], app.flags)
 
-        system.takesFlags = true
+        system.flagAnswer = .taken
         system.activate(chrome)
         XCTAssertEqual(["AXEnhancedUserInterface": true], app.flags)
 
         system.activate(chrome)
         XCTAssertEqual(2, system.flagsAsked)
+    }
+
+    /// Chromium acts on AXEnhancedUserInterface while answering that it has no such attribute, and describes its pages
+    /// 2 s after the last time it's asked: that answer counts as asked, so the dictations and activations meanwhile
+    /// don't put the page off.
+    func testChromiumIsAskedOnceThoughItAnswersItHasNoSuchAttribute() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
+        let page = FakeAXField("AXWebArea", in: system.window("Inbox - Gmail", in: chrome))
+        let box = FakeAXField("AXTextArea", in: page)
+        system.focus = page
+        system.flagAnswer = .unsupported
+        let clock = FakeReaderClock()
+        var lastAsked: TimeInterval?
+        system.onSetFlag = { _ in lastAsked = clock.time }
+        system.onFocusQuery = { [unowned system] in
+            if let lastAsked, clock.time >= lastAsked + 2 { system.focus = box }
+        }
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
+
+        system.activate(chrome)
+        clock.time = 0.5
+        let field = try XCTUnwrap(reader.read())
+        XCTAssertFalse(field.isResolved)
+        clock.time = 1.5
+        system.activate(notes)
+        system.activate(chrome)
+        let again = try XCTUnwrap(reader.read())
+        XCTAssertFalse(again.isResolved)
+
+        clock.time = 2.2
+        XCTAssertEqual("AXTextArea", reader.resolved(field)?.role)
+        XCTAssertEqual(1, system.flagsAsked)
+    }
+
+    /// A dictation starting while the app that came to the front is being asked doesn't ask it again.
+    func testAReadDuringAWakeDoesntAskAgain() throws {
+        let system = FakeAXSystem()
+        system.apps[chrome] = FocusedField.App(processIdentifier: chrome, bundleIdentifier: "com.google.Chrome")
+        system.focus = FakeAXField("AXWebArea", in: system.window("New Tab", in: chrome))
+        system.front = notes
+        let reader = FocusedField.Reader(source: system)
+        reader.startWaking()
+        var reading = false
+        var readMeanwhile: FocusedField?
+        system.onSetFlag = { _ in
+            guard !reading else { return }
+            reading = true
+            readMeanwhile = reader.read()
+        }
+
+        system.activate(chrome)
+
+        XCTAssertNotNil(readMeanwhile)
+        XCTAssertEqual(1, system.flagsAsked)
+    }
+
+    /// What the Accessibility API's answer to a flag comes to: an app that didn't answer is asked again; any other
+    /// answer but success may still have been acted on.
+    func testWhatAnAnswerToAFlagComesTo() {
+        XCTAssertEqual(.taken, FocusedField.SystemAccessibility.flagAnswer(.success))
+        let answered: [AXError] = [.attributeUnsupported, .illegalArgument, .failure, .notImplemented]
+        for error in answered {
+            XCTAssertEqual(.unsupported, FocusedField.SystemAccessibility.flagAnswer(error), "\(error.rawValue)")
+        }
+
+        let unanswered: [AXError] = [.cannotComplete, .apiDisabled, .invalidUIElement, .notEnoughPrecision]
+        for error in unanswered {
+            XCTAssertEqual(.noAnswer, FocusedField.SystemAccessibility.flagAnswer(error), "\(error.rawValue)")
+        }
     }
 
     func testTheAppInFrontIsWokenAtStart() {
@@ -590,8 +662,8 @@ private final class FakeAXSystem: FocusedField.Accessibility {
     var secureInput = FocusedField.SecureInput.off
     /// The app in front; by default the focused element's.
     var front: pid_t?
-    /// Whether apps take the flags set on them.
-    var takesFlags = true
+    /// How apps answer the flags set on them; they keep a flag only when they take it.
+    var flagAnswer = FocusedField.FlagAnswer.taken
     private(set) var flagsAsked = 0
     var onSetFlag: ((String) -> Void)?
     /// Runs at each focus query, before it's answered: the focus moving while time passes.
@@ -697,12 +769,14 @@ private final class FakeAXSystem: FocusedField.Accessibility {
         return app
     }
 
-    func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> Bool {
+    func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> FocusedField.FlagAnswer {
         flagsAsked += 1
         onSetFlag?(attribute)
-        guard takesFlags else { return false }
-        (element as! FakeAXField).flags[attribute] = value
-        return true
+        if flagAnswer == .taken {
+            (element as! FakeAXField).flags[attribute] = value
+        }
+
+        return flagAnswer
     }
 
     func isSame(_ element: AnyObject, as other: AnyObject) -> Bool {

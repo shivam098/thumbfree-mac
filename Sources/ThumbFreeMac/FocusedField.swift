@@ -127,8 +127,8 @@ extension FocusedField {
         func processIdentifier(of element: AnyObject) throws -> pid_t
         /// The app's own element (AXUIElementCreateApplication).
         func application(_ processIdentifier: pid_t) -> AnyObject
-        /// Sets a true/false attribute; false when the app refused it.
-        func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> Bool
+        /// Sets a true/false attribute, and says how the app answered.
+        func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> FlagAnswer
         /// The same element (CFEqual).
         func isSame(_ element: AnyObject, as other: AnyObject) -> Bool
         func app(_ processIdentifier: pid_t) -> App
@@ -140,6 +140,18 @@ extension FocusedField {
         func observeActivations(_ handler: @escaping @Sendable (pid_t) -> Void) -> AnyObject
         /// IsSecureEventInputEnabled(), asked on the main thread (`SecureInput.current`).
         var secureInput: SecureInput { get }
+    }
+
+    /// How an app answered a flag set on it (`Accessibility.setFlag`).
+    public enum FlagAnswer: Equatable, Sendable {
+        /// It took the flag.
+        case taken
+        /// It answered that it has no such attribute, which doesn't mean it ignored it: Chromium acts on
+        /// AXEnhancedUserInterface, then hands it on to AppKit, whose answer that is.
+        case unsupported
+        /// No answer: Accessibility is off for ThumbFree, the app didn't answer in time (one still starting, say), or
+        /// it has gone.
+        case noAnswer
     }
 
     /// Reads the focused box when a dictation starts (`read`), again once a web page has described it (`resolved`),
@@ -184,9 +196,9 @@ extension FocusedField {
         }
 
         /// Wakes Chromium and Electron apps before any dictation: the app in front now, then each one as it comes to
-        /// the front. Chromium (and Electron since 38) turns its page descriptions on 2 s after it's asked, too late
-        /// for a dictation starting then. Call it once, when ThumbFree starts; the wakes happen off the main thread,
-        /// which never waits for them (an app still launching can take a second to answer).
+        /// the front. Chromium (and Electron since 38) turns its page descriptions on 2 s after the last time it's
+        /// asked, too late for a dictation starting then. Call it once, when ThumbFree starts; the wakes happen off the
+        /// main thread, which never waits for them (an app still launching can take a second to answer).
         public func startWaking() {
             let started: Bool = lock.withLock {
                 guard activations == nil else { return false }
@@ -198,18 +210,24 @@ extension FocusedField {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in _ = self?.wake(front) }
         }
 
-        /// Wakes the app `pid` if it's a Chromium or Electron app that hasn't taken the flag yet. It's taken as woken
-        /// only once it has: an app that refused it (still starting, say) is asked again next time. True when this
-        /// woke it.
+        /// Wakes the app `pid` if it's a Chromium or Electron app that hasn't been asked yet: each app is asked once
+        /// while it runs. An app that answered counts as asked even when it said it has no such attribute: Chromium
+        /// answers that while acting on the flag, and turns its page descriptions on 2 s after the last time it's
+        /// asked, so asking it again at each activation or dictation would only put them off. An app that didn't
+        /// answer (still starting, say) is asked again next time. True when this asked it.
         @discardableResult
         func wake(_ pid: pid_t) -> Bool {
             guard wakesWebContent, pid != ownProcess else { return false }
             let app = source.app(pid)
             guard let web = Self.webContent(of: app) else { return false }
             let key = "\(app.processIdentifier) \(app.bundleIdentifier ?? "")"
-            guard !lock.withLock({ woken.contains(key) }),
-                  source.setFlag(web.wakeAttribute, true, of: source.application(pid)) else { return false }
-            lock.withLock { _ = woken.insert(key) }
+            // Taken before asking, so an activation and a dictation starting at the same moment ask once.
+            guard lock.withLock({ woken.insert(key).inserted }) else { return false }
+            guard source.setFlag(web.wakeAttribute, true, of: source.application(pid)) != .noAnswer else {
+                lock.withLock { _ = woken.remove(key) }
+                return false
+            }
+
             return true
         }
 

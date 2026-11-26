@@ -91,8 +91,10 @@ This page is the Mac side: how each feature is built here, and in what order.
   pages are described by a WebKit helper process.
 - **Chrome, Edge and Electron apps** describe their web content only once an assistive app asks (the Mac counterpart of
   the Windows "wake"): set `AXEnhancedUserInterface` (Chrome) or `AXManualAccessibility` (Electron) on the app. They
-  wait 2 s before doing it, so ThumbFree asks when such an app comes to the front, not when a dictation starts; a box
-  still undescribed at the start is read again just before the first piece is typed.
+  do it 2 s after the last time they're asked, so ThumbFree asks each app once while it runs, as soon as it comes to
+  the front rather than when a dictation starts. Chromium answers that it has no such attribute while acting on the
+  flag, so any answer counts; only an app that doesn't answer (one still starting) is asked again. A box still
+  undescribed at the start is read again just before the first piece is typed.
 - **Before each piece is typed**, the same element must still have the focus (`CFEqual` on the `AXUIElement`) and every
   modifier key must be physically up. Otherwise nothing more is typed and the whole dictation goes to the tap-to-copy
   notification.

@@ -267,7 +267,7 @@ final class FakeAccessibility: FocusedField.Accessibility, @unchecked Sendable {
         FakeElement(pid: processIdentifier, [kAXRoleAttribute: kAXApplicationRole])
     }
 
-    func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> Bool { false }
+    func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> FocusedField.FlagAnswer { .noAnswer }
 
     func isSame(_ element: AnyObject, as other: AnyObject) -> Bool { element === other }
 

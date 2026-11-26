@@ -42,8 +42,15 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== Building ThumbFree $version for arm64 and x86_64"
-swift build -c release --arch arm64 --arch x86_64 --product ThumbFree
-binary="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/ThumbFree"
+# Multi-architecture builds use Xcode's build system, which can lose binary-target library search paths.
+for arch in arm64 x86_64; do
+  swift build --build-system native -c release --arch "$arch" --product ThumbFree
+done
+binary="$work/ThumbFree"
+lipo -create \
+  "$(swift build --build-system native -c release --arch arm64 --show-bin-path)/ThumbFree" \
+  "$(swift build --build-system native -c release --arch x86_64 --show-bin-path)/ThumbFree" \
+  -output "$binary"
 lipo "$binary" -verify_arch arm64 x86_64
 echo "Architectures: $(lipo -archs "$binary")"
 

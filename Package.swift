@@ -33,7 +33,7 @@ let package = Package(
         .testTarget(name: "ThumbFreeCoreTests", dependencies: ["ThumbFreeCore"], path: "tests/ThumbFreeCoreTests"),
         .testTarget(
             name: "ThumbFreeSpeechTests",
-            dependencies: ["ThumbFreeSpeech", "CSherpaOnnx"],
+            dependencies: ["ThumbFreeSpeech", "CSherpaOnnx", "CWhisper"],
             path: "tests/ThumbFreeSpeechTests"),
         .testTarget(name: "ThumbFreeMacTests", dependencies: ["ThumbFreeMac"], path: "tests/ThumbFreeMacTests"),
         .testTarget(

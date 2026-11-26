@@ -106,8 +106,23 @@ extension FocusedField {
             AXUIElementCreateApplication(processIdentifier)
         }
 
-        func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> Bool {
-            AXUIElementSetAttributeValue(Self.ax(element), attribute as CFString, NSNumber(value: value)) == .success
+        func setFlag(_ attribute: String, _ value: Bool, of element: AnyObject) -> FlagAnswer {
+            Self.flagAnswer(
+                AXUIElementSetAttributeValue(Self.ax(element), attribute as CFString, NSNumber(value: value)))
+        }
+
+        /// What an app's answer to a flag comes to: an app that didn't answer at all (Accessibility is off for
+        /// ThumbFree, the app took too long, or it has gone) is `noAnswer`; any answer but success is `unsupported`,
+        /// which doesn't mean the app ignored the flag (Chromium acts on it, then answers so).
+        static func flagAnswer(_ error: AXError) -> FlagAnswer {
+            switch error {
+            case .success:
+                return .taken
+            case .cannotComplete, .apiDisabled, .invalidUIElement, .notEnoughPrecision:
+                return .noAnswer
+            default:
+                return .unsupported
+            }
         }
 
         func isSame(_ element: AnyObject, as other: AnyObject) -> Bool {
